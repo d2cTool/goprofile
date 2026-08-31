@@ -1,3 +1,5 @@
+COMPOSE := docker compose -f docker/docker-compose.yml
+
 .PHONY: tidy test cover lint run-server run-worker compose-up compose-down
 
 tidy:
@@ -20,7 +22,7 @@ run-worker:
 	go run ./cmd/worker
 
 compose-up:
-	docker compose up --build
+	$(COMPOSE) up --build
 
 compose-down:
-	docker compose down -v
+	$(COMPOSE) down -v

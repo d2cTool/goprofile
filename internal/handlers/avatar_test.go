@@ -25,10 +25,10 @@ type stubRepo struct {
 	avatar *domain.Avatar
 }
 
-func (s *stubRepo) Create(_ context.Context, a *domain.Avatar) error {
+func (s *stubRepo) CreateWithOutbox(_ context.Context, a *domain.Avatar, _ domain.OutboxEvent) (int64, error) {
 	cp := *a
 	s.avatar = &cp
-	return nil
+	return 1, nil
 }
 func (s *stubRepo) GetByID(_ context.Context, id uuid.UUID) (*domain.Avatar, error) {
 	if s.avatar == nil || s.avatar.ID != id {
@@ -50,32 +50,22 @@ func (s *stubRepo) ListByUserID(_ context.Context, userID string) ([]domain.Avat
 	}
 	return []domain.Avatar{*s.avatar}, nil
 }
-func (s *stubRepo) SoftDeleteOwned(_ context.Context, id uuid.UUID, userID string) (*domain.Avatar, error) {
+func (s *stubRepo) SoftDeleteOwnedWithOutbox(_ context.Context, id uuid.UUID, userID string, _ domain.OutboxEvent) (*domain.Avatar, int64, error) {
 	if s.avatar == nil || s.avatar.ID != id {
-		return nil, domain.ErrAvatarNotFound
+		return nil, 0, domain.ErrAvatarNotFound
 	}
 	if s.avatar.UserID != userID {
-		return nil, domain.ErrForbidden
+		return nil, 0, domain.ErrForbidden
 	}
 	cp := *s.avatar
 	s.avatar = nil
-	return &cp, nil
-}
-func (s *stubRepo) SoftDeleteLatestOwned(ctx context.Context, userID string) (*domain.Avatar, error) {
-	a, err := s.GetLatestByUserID(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	return s.SoftDeleteOwned(ctx, a.ID, userID)
+	return &cp, 1, nil
 }
 func (s *stubRepo) MarkProcessing(context.Context, uuid.UUID) (bool, error) { return true, nil }
 func (s *stubRepo) CompleteProcessing(context.Context, uuid.UUID, map[string]string, int, int) error {
 	return nil
 }
 func (s *stubRepo) FailProcessing(context.Context, uuid.UUID) error { return nil }
-func (s *stubRepo) EnqueueOutbox(context.Context, domain.OutboxEvent) (int64, error) {
-	return 1, nil
-}
 func (s *stubRepo) ListUnpublished(context.Context, int) ([]domain.OutboxEvent, error) {
 	return nil, nil
 }

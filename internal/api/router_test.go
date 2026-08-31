@@ -20,7 +20,9 @@ func (healthPinger) Ping(context.Context) error { return nil }
 
 type emptyStore struct{}
 
-func (emptyStore) Create(context.Context, *domain.Avatar) error { return nil }
+func (emptyStore) CreateWithOutbox(context.Context, *domain.Avatar, domain.OutboxEvent) (int64, error) {
+	return 1, nil
+}
 func (emptyStore) GetByID(context.Context, uuid.UUID) (*domain.Avatar, error) {
 	return nil, domain.ErrAvatarNotFound
 }
@@ -30,20 +32,14 @@ func (emptyStore) GetLatestByUserID(context.Context, string) (*domain.Avatar, er
 func (emptyStore) ListByUserID(context.Context, string) ([]domain.Avatar, error) {
 	return []domain.Avatar{}, nil
 }
-func (emptyStore) SoftDeleteOwned(context.Context, uuid.UUID, string) (*domain.Avatar, error) {
-	return nil, domain.ErrAvatarNotFound
-}
-func (emptyStore) SoftDeleteLatestOwned(context.Context, string) (*domain.Avatar, error) {
-	return nil, domain.ErrAvatarNotFound
+func (emptyStore) SoftDeleteOwnedWithOutbox(context.Context, uuid.UUID, string, domain.OutboxEvent) (*domain.Avatar, int64, error) {
+	return nil, 0, domain.ErrAvatarNotFound
 }
 func (emptyStore) MarkProcessing(context.Context, uuid.UUID) (bool, error) { return false, nil }
 func (emptyStore) CompleteProcessing(context.Context, uuid.UUID, map[string]string, int, int) error {
 	return nil
 }
 func (emptyStore) FailProcessing(context.Context, uuid.UUID) error { return nil }
-func (emptyStore) EnqueueOutbox(context.Context, domain.OutboxEvent) (int64, error) {
-	return 1, nil
-}
 func (emptyStore) ListUnpublished(context.Context, int) ([]domain.OutboxEvent, error) {
 	return nil, nil
 }

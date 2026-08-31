@@ -16,26 +16,30 @@ import (
 )
 
 type memRepo struct {
-	mu     sync.Mutex
-	items  map[uuid.UUID]*domain.Avatar
-	outbox []domain.OutboxEvent
-	nextID int64
-	fail   error
+	mu         sync.Mutex
+	items      map[uuid.UUID]*domain.Avatar
+	outbox     []domain.OutboxEvent
+	nextID     int64
+	fail       error
+	failOutbox error
 }
 
 func newMemRepo() *memRepo {
 	return &memRepo{items: map[uuid.UUID]*domain.Avatar{}}
 }
 
-func (m *memRepo) Create(_ context.Context, a *domain.Avatar) error {
+func (m *memRepo) CreateWithOutbox(_ context.Context, a *domain.Avatar, ev domain.OutboxEvent) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.fail != nil {
-		return m.fail
+		return 0, m.fail
+	}
+	if m.failOutbox != nil {
+		return 0, m.failOutbox
 	}
 	cp := *a
 	m.items[a.ID] = &cp
-	return nil
+	return m.enqueueLocked(ev), nil
 }
 
 func (m *memRepo) GetByID(_ context.Context, id uuid.UUID) (*domain.Avatar, error) {
@@ -72,28 +76,23 @@ func (m *memRepo) ListByUserID(_ context.Context, userID string) ([]domain.Avata
 	return out, nil
 }
 
-func (m *memRepo) SoftDeleteOwned(_ context.Context, id uuid.UUID, userID string) (*domain.Avatar, error) {
+func (m *memRepo) SoftDeleteOwnedWithOutbox(_ context.Context, id uuid.UUID, userID string, ev domain.OutboxEvent) (*domain.Avatar, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.items[id]
 	if !ok || a.DeletedAt != nil {
-		return nil, domain.ErrAvatarNotFound
+		return nil, 0, domain.ErrAvatarNotFound
 	}
 	if a.UserID != userID {
-		return nil, domain.ErrForbidden
+		return nil, 0, domain.ErrForbidden
+	}
+	if m.failOutbox != nil {
+		return nil, 0, m.failOutbox
 	}
 	now := a.UpdatedAt
 	a.DeletedAt = &now
 	cp := *a
-	return &cp, nil
-}
-
-func (m *memRepo) SoftDeleteLatestOwned(ctx context.Context, userID string) (*domain.Avatar, error) {
-	a, err := m.GetLatestByUserID(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	return m.SoftDeleteOwned(ctx, a.ID, userID)
+	return &cp, m.enqueueLocked(ev), nil
 }
 
 func (m *memRepo) MarkProcessing(_ context.Context, id uuid.UUID) (bool, error) {
@@ -138,13 +137,11 @@ func (m *memRepo) FailProcessing(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (m *memRepo) EnqueueOutbox(_ context.Context, ev domain.OutboxEvent) (int64, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *memRepo) enqueueLocked(ev domain.OutboxEvent) int64 {
 	m.nextID++
 	ev.ID = m.nextID
 	m.outbox = append(m.outbox, ev)
-	return ev.ID, nil
+	return ev.ID
 }
 
 func (m *memRepo) ListUnpublished(_ context.Context, _ int) ([]domain.OutboxEvent, error) {
@@ -337,6 +334,29 @@ func TestUploadValidation(t *testing.T) {
 	}
 }
 
+func TestDeleteRollsBackWhenOutboxFails(t *testing.T) {
+	repo := newMemRepo()
+	objects := newMemObjects()
+	svc := NewAvatarService(repo, objects, &memPub{}, "http://x", domain.MaxFileSize)
+	ctx := context.Background()
+
+	avatar, err := svc.Upload(ctx, "alice", "a.png", pngBytes(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo.failOutbox = errors.New("outbox down")
+	if err := svc.Delete(ctx, avatar.ID, "alice"); err == nil {
+		t.Fatal("expected outbox error")
+	}
+	if _, err := svc.Get(ctx, avatar.ID); err != nil {
+		t.Fatalf("avatar must stay visible after failed delete tx: %v", err)
+	}
+	if len(objects.data) == 0 {
+		t.Fatal("s3 object must remain when delete is rolled back")
+	}
+}
+
 func TestUploadCompensatesS3WhenCreateFails(t *testing.T) {
 	repo := newMemRepo()
 	repo.fail = errors.New("db down")
@@ -376,11 +396,13 @@ func TestFlushOutboxAndRecoverStuck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = repo.EnqueueOutbox(ctx, domain.OutboxEvent{
+	repo.mu.Lock()
+	_ = repo.enqueueLocked(domain.OutboxEvent{
 		EventID: "upload:" + avatar.ID.String() + ":retry",
 		Kind:    domain.OutboxUpload,
 		Payload: []byte(`{"avatar_id":"` + avatar.ID.String() + `","user_id":"alice","s3_key":"` + avatar.S3Key + `"}`),
 	})
+	repo.mu.Unlock()
 	if err := svc.FlushOutbox(ctx); err != nil {
 		t.Fatal(err)
 	}

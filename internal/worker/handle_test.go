@@ -16,7 +16,9 @@ import (
 
 type claimRepo struct{}
 
-func (c *claimRepo) Create(context.Context, *domain.Avatar) error { return nil }
+func (c *claimRepo) CreateWithOutbox(context.Context, *domain.Avatar, domain.OutboxEvent) (int64, error) {
+	return 1, nil
+}
 func (c *claimRepo) GetByID(context.Context, uuid.UUID) (*domain.Avatar, error) {
 	return nil, domain.ErrAvatarNotFound
 }
@@ -26,20 +28,14 @@ func (c *claimRepo) GetLatestByUserID(context.Context, string) (*domain.Avatar, 
 func (c *claimRepo) ListByUserID(context.Context, string) ([]domain.Avatar, error) {
 	return nil, nil
 }
-func (c *claimRepo) SoftDeleteOwned(context.Context, uuid.UUID, string) (*domain.Avatar, error) {
-	return nil, domain.ErrAvatarNotFound
-}
-func (c *claimRepo) SoftDeleteLatestOwned(context.Context, string) (*domain.Avatar, error) {
-	return nil, domain.ErrAvatarNotFound
+func (c *claimRepo) SoftDeleteOwnedWithOutbox(context.Context, uuid.UUID, string, domain.OutboxEvent) (*domain.Avatar, int64, error) {
+	return nil, 0, domain.ErrAvatarNotFound
 }
 func (c *claimRepo) MarkProcessing(context.Context, uuid.UUID) (bool, error) { return false, nil }
 func (c *claimRepo) CompleteProcessing(context.Context, uuid.UUID, map[string]string, int, int) error {
 	return nil
 }
 func (c *claimRepo) FailProcessing(context.Context, uuid.UUID) error { return nil }
-func (c *claimRepo) EnqueueOutbox(context.Context, domain.OutboxEvent) (int64, error) {
-	return 1, nil
-}
 func (c *claimRepo) ListUnpublished(context.Context, int) ([]domain.OutboxEvent, error) {
 	return nil, nil
 }

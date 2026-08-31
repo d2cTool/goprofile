@@ -11,7 +11,8 @@
 ## Быстрый старт
 
 ```bash
-docker compose up --build
+make compose-up
+# или: docker compose -f docker/docker-compose.yml up --build
 ```
 
 Веб-интерфейс: http://localhost:8080/web/upload  

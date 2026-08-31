@@ -1,3 +1,5 @@
+name: gophprofile
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -88,7 +90,9 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic avatar.process --partitions 3 --replication-factor 1
 
   server:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: gophprofile-server
     command: ["./server"]
     ports:
@@ -115,7 +119,9 @@ services:
         condition: service_completed_successfully
 
   worker:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: gophprofile-worker
     command: ["./worker"]
     environment: *app-env

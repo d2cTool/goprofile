@@ -77,10 +77,6 @@ func (s *AvatarService) Upload(ctx context.Context, userID, fileName string, dat
 	if err := s.objects.Upload(ctx, key, info.MIME, data); err != nil {
 		return nil, err
 	}
-	if err := s.repo.Create(ctx, avatar); err != nil {
-		_ = s.objects.Delete(ctx, []string{key})
-		return nil, err
-	}
 
 	event := domain.AvatarUploadEvent{
 		EventID:  domain.UploadEventID(id.String()),
@@ -88,9 +84,17 @@ func (s *AvatarService) Upload(ctx context.Context, userID, fileName string, dat
 		UserID:   userID,
 		S3Key:    key,
 	}
-	if err := s.enqueueAndPublish(ctx, domain.OutboxUpload, event.EventID, event); err != nil {
-		slog.Warn("upload published later via outbox", "avatar_id", id, "err", err)
+	ev, err := newOutboxEvent(domain.OutboxUpload, event.EventID, event)
+	if err != nil {
+		_ = s.objects.Delete(ctx, []string{key})
+		return nil, err
 	}
+	outboxID, err := s.repo.CreateWithOutbox(ctx, avatar, ev)
+	if err != nil {
+		_ = s.objects.Delete(ctx, []string{key})
+		return nil, err
+	}
+	s.publishCommitted(ctx, outboxID, ev)
 	return avatar, nil
 }
 
@@ -123,25 +127,30 @@ func (s *AvatarService) Delete(ctx context.Context, id uuid.UUID, userID string)
 	if existing.UserID != userID {
 		return domain.ErrForbidden
 	}
-	deleted, err := s.repo.SoftDeleteOwned(ctx, id, userID)
+	ev, err := deleteOutboxEvent(existing)
 	if err != nil {
 		return err
 	}
-	return s.publishDelete(ctx, deleted)
+	_, outboxID, err := s.repo.SoftDeleteOwnedWithOutbox(ctx, id, userID, ev)
+	if err != nil {
+		return err
+	}
+	s.publishCommitted(ctx, outboxID, ev)
+	return nil
 }
 
 func (s *AvatarService) DeleteLatest(ctx context.Context, userID string) error {
 	if err := domain.ValidateUserID(userID); err != nil {
 		return err
 	}
-	deleted, err := s.repo.SoftDeleteLatestOwned(ctx, userID)
+	current, err := s.repo.GetLatestByUserID(ctx, userID)
 	if err != nil {
 		return err
 	}
-	return s.publishDelete(ctx, deleted)
+	return s.Delete(ctx, current.ID, userID)
 }
 
-func (s *AvatarService) publishDelete(ctx context.Context, a *domain.Avatar) error {
+func deleteOutboxEvent(a *domain.Avatar) (domain.OutboxEvent, error) {
 	keys := []string{a.S3Key}
 	for _, k := range a.ThumbnailS3Keys {
 		if k != "" {
@@ -153,30 +162,27 @@ func (s *AvatarService) publishDelete(ctx context.Context, a *domain.Avatar) err
 		AvatarID: a.ID.String(),
 		S3Keys:   keys,
 	}
-	if err := s.enqueueAndPublish(ctx, domain.OutboxDelete, event.EventID, event); err != nil {
-		slog.Warn("delete published later via outbox", "avatar_id", a.ID, "err", err)
-	}
-	return nil
+	return newOutboxEvent(domain.OutboxDelete, event.EventID, event)
 }
 
-func (s *AvatarService) enqueueAndPublish(ctx context.Context, kind, eventID string, payload any) error {
+func newOutboxEvent(kind, eventID string, payload any) (domain.OutboxEvent, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return domain.OutboxEvent{}, err
 	}
-	id, err := s.repo.EnqueueOutbox(ctx, domain.OutboxEvent{EventID: eventID, Kind: kind, Payload: body})
-	if err != nil {
-		if pubErr := s.publishKind(ctx, kind, body); pubErr != nil {
-			return fmt.Errorf("outbox: %w; publish: %w", err, pubErr)
-		}
-		return nil
-	}
+	return domain.OutboxEvent{EventID: eventID, Kind: kind, Payload: body}, nil
+}
+
+func (s *AvatarService) publishCommitted(ctx context.Context, outboxID int64, ev domain.OutboxEvent) {
 	if err := publishWithRetry(ctx, 3, func() error {
-		return s.publishKind(ctx, kind, body)
+		return s.publishKind(ctx, ev.Kind, ev.Payload)
 	}); err != nil {
-		return err
+		slog.Warn("outbox publish deferred to worker", "outbox_id", outboxID, "event_id", ev.EventID, "err", err)
+		return
 	}
-	return s.repo.MarkOutboxPublished(ctx, id)
+	if err := s.repo.MarkOutboxPublished(ctx, outboxID); err != nil {
+		slog.Warn("mark outbox published", "outbox_id", outboxID, "err", err)
+	}
 }
 
 func (s *AvatarService) publishKind(ctx context.Context, kind string, body []byte) error {

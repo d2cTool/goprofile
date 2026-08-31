@@ -25,25 +25,33 @@ func (r *AvatarRepository) Ping(ctx context.Context) error {
 	return r.pool.Ping(ctx)
 }
 
-func (r *AvatarRepository) Create(ctx context.Context, a *domain.Avatar) error {
-	const q = `
-		INSERT INTO avatars (
-			id, user_id, file_name, mime_type, size_bytes, width, height,
-			s3_key, thumbnail_s3_keys, upload_status, processing_status,
-			created_at, updated_at
-		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7,
-			$8, $9, $10, $11, $12, $13
-		)`
-	_, err := r.pool.Exec(ctx, q,
-		a.ID, a.UserID, a.FileName, a.MimeType, a.SizeBytes, a.Width, a.Height,
-		a.S3Key, a.ThumbnailKeysJSON(), a.UploadStatus, a.ProcessingStatus,
-		a.CreatedAt, a.UpdatedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("insert avatar: %w", err)
-	}
-	return nil
+func (r *AvatarRepository) CreateWithOutbox(ctx context.Context, a *domain.Avatar, ev domain.OutboxEvent) (int64, error) {
+	var outboxID int64
+	err := r.withTx(ctx, func(tx pgx.Tx) error {
+		const q = `
+			INSERT INTO avatars (
+				id, user_id, file_name, mime_type, size_bytes, width, height,
+				s3_key, thumbnail_s3_keys, upload_status, processing_status,
+				created_at, updated_at
+			) VALUES (
+				$1, $2, $3, $4, $5, $6, $7,
+				$8, $9, $10, $11, $12, $13
+			)`
+		if _, err := tx.Exec(ctx, q,
+			a.ID, a.UserID, a.FileName, a.MimeType, a.SizeBytes, a.Width, a.Height,
+			a.S3Key, a.ThumbnailKeysJSON(), a.UploadStatus, a.ProcessingStatus,
+			a.CreatedAt, a.UpdatedAt,
+		); err != nil {
+			return fmt.Errorf("insert avatar: %w", err)
+		}
+		id, err := insertOutbox(ctx, tx, ev)
+		if err != nil {
+			return err
+		}
+		outboxID = id
+		return nil
+	})
+	return outboxID, err
 }
 
 func (r *AvatarRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Avatar, error) {
@@ -99,31 +107,60 @@ func (r *AvatarRepository) ListByUserID(ctx context.Context, userID string) ([]d
 	return out, nil
 }
 
-func (r *AvatarRepository) SoftDeleteOwned(ctx context.Context, id uuid.UUID, userID string) (*domain.Avatar, error) {
-	const q = `
-		UPDATE avatars
-		SET deleted_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-		RETURNING id, user_id, file_name, mime_type, size_bytes, width, height,
-		          s3_key, COALESCE(thumbnail_s3_keys, '{}'::jsonb), upload_status, processing_status,
-		          created_at, updated_at, deleted_at`
-	return scanAvatar(r.pool.QueryRow(ctx, q, id, userID))
+func (r *AvatarRepository) SoftDeleteOwnedWithOutbox(ctx context.Context, id uuid.UUID, userID string, ev domain.OutboxEvent) (*domain.Avatar, int64, error) {
+	var (
+		avatar   *domain.Avatar
+		outboxID int64
+	)
+	err := r.withTx(ctx, func(tx pgx.Tx) error {
+		const q = `
+			UPDATE avatars
+			SET deleted_at = NOW(), updated_at = NOW()
+			WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+			RETURNING id, user_id, file_name, mime_type, size_bytes, width, height,
+			          s3_key, COALESCE(thumbnail_s3_keys, '{}'::jsonb), upload_status, processing_status,
+			          created_at, updated_at, deleted_at`
+		a, err := scanAvatar(tx.QueryRow(ctx, q, id, userID))
+		if err != nil {
+			return err
+		}
+		oid, err := insertOutbox(ctx, tx, ev)
+		if err != nil {
+			return err
+		}
+		avatar = a
+		outboxID = oid
+		return nil
+	})
+	return avatar, outboxID, err
 }
 
-func (r *AvatarRepository) SoftDeleteLatestOwned(ctx context.Context, userID string) (*domain.Avatar, error) {
-	const q = `
-		UPDATE avatars
-		SET deleted_at = NOW(), updated_at = NOW()
-		WHERE id = (
-			SELECT id FROM avatars
-			WHERE user_id = $1 AND deleted_at IS NULL
-			ORDER BY created_at DESC
-			LIMIT 1
-		)
-		RETURNING id, user_id, file_name, mime_type, size_bytes, width, height,
-		          s3_key, COALESCE(thumbnail_s3_keys, '{}'::jsonb), upload_status, processing_status,
-		          created_at, updated_at, deleted_at`
-	return scanAvatar(r.pool.QueryRow(ctx, q, userID))
+func (r *AvatarRepository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	return nil
+}
+
+func insertOutbox(ctx context.Context, tx pgx.Tx, ev domain.OutboxEvent) (int64, error) {
+	var id int64
+	err := tx.QueryRow(ctx, `
+		INSERT INTO outbox_events (event_id, kind, payload)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (event_id) DO UPDATE SET kind = EXCLUDED.kind, payload = EXCLUDED.payload
+		RETURNING id`, ev.EventID, ev.Kind, ev.Payload).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("insert outbox: %w", err)
+	}
+	return id, nil
 }
 
 func (r *AvatarRepository) MarkProcessing(ctx context.Context, id uuid.UUID) (bool, error) {
@@ -184,19 +221,6 @@ func (r *AvatarRepository) FailProcessing(ctx context.Context, id uuid.UUID) err
 		return fmt.Errorf("fail processing: %w", err)
 	}
 	return nil
-}
-
-func (r *AvatarRepository) EnqueueOutbox(ctx context.Context, ev domain.OutboxEvent) (int64, error) {
-	var id int64
-	err := r.pool.QueryRow(ctx, `
-		INSERT INTO outbox_events (event_id, kind, payload)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (event_id) DO UPDATE SET kind = EXCLUDED.kind
-		RETURNING id`, ev.EventID, ev.Kind, ev.Payload).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("enqueue outbox: %w", err)
-	}
-	return id, nil
 }
 
 func (r *AvatarRepository) ListUnpublished(ctx context.Context, limit int) ([]domain.OutboxEvent, error) {
