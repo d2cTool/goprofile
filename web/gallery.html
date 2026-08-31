@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GophProfile — галерея</title>
+  <link rel="stylesheet" href="/web/static/app.css">
+</head>
+<body>
+  <main class="page">
+    <header class="top">
+      <a class="logo" href="/web/upload">GophProfile</a>
+      <nav>
+        <a href="/web/upload">Загрузка</a>
+        <a href="#" class="active">Галерея</a>
+      </nav>
+    </header>
+
+    <section class="card">
+      <h1>Галерея пользователя</h1>
+      <p id="user-label" class="muted"></p>
+      <div id="grid" class="grid"></div>
+      <p id="empty" class="muted" hidden>Аватарок пока нет.</p>
+    </section>
+  </main>
+  <script src="/web/static/app.js"></script>
+</body>
+</html>

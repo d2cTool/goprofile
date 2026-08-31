@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gophprofile-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gophprofile-worker
+  template:
+    metadata:
+      labels:
+        app: gophprofile-worker
+    spec:
+      containers:
+        - name: worker
+          image: gophprofile:latest
+          command: ["./worker"]
+          envFrom:
+            - configMapRef:
+                name: gophprofile
+            - secretRef:
+                name: gophprofile-secrets
