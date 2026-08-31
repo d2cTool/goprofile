@@ -71,4 +71,17 @@ func TestFormatFromMIME(t *testing.T) {
 	if FormatFromMIME(MIMEJPEG) != "jpeg" || ExtForMIME(MIMEPNG) != ".png" {
 		t.Fatal("mapping")
 	}
+	if FormatFromMIME("application/octet-stream") != "" {
+		t.Fatal("unknown mime must be empty")
+	}
+}
+
+func TestInspectRejectsHugeDimensions(t *testing.T) {
+	t.Parallel()
+	if err := checkPixels(10000, 10000); err != domain.ErrImageTooLarge {
+		t.Fatalf("got %v", err)
+	}
+	if err := checkPixels(0, 10); err != domain.ErrInvalidImage {
+		t.Fatalf("got %v", err)
+	}
 }

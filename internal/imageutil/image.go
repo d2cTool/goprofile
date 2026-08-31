@@ -70,6 +70,9 @@ func Inspect(data []byte) (Info, error) {
 	if err != nil {
 		return Info{}, domain.ErrInvalidImage
 	}
+	if err := checkPixels(cfg.Width, cfg.Height); err != nil {
+		return Info{}, err
+	}
 	return Info{
 		MIME:   mime,
 		Ext:    ExtForMIME(mime),
@@ -79,11 +82,28 @@ func Inspect(data []byte) (Info, error) {
 }
 
 func Decode(data []byte) (image.Image, error) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", domain.ErrInvalidImage, err)
+	}
+	if err := checkPixels(cfg.Width, cfg.Height); err != nil {
+		return nil, err
+	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", domain.ErrInvalidImage, err)
 	}
 	return img, nil
+}
+
+func checkPixels(w, h int) error {
+	if w <= 0 || h <= 0 {
+		return domain.ErrInvalidImage
+	}
+	if w > domain.MaxPixels || h > domain.MaxPixels || w*h > domain.MaxPixels {
+		return domain.ErrImageTooLarge
+	}
+	return nil
 }
 
 func Resize(src image.Image, width, height int) image.Image {
@@ -142,6 +162,6 @@ func FormatFromMIME(mime string) string {
 	case MIMEWebP:
 		return "webp"
 	default:
-		return "jpeg"
+		return ""
 	}
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -76,6 +78,7 @@ func (s *AvatarService) Upload(ctx context.Context, userID, fileName string, dat
 		return nil, err
 	}
 	if err := s.repo.Create(ctx, avatar); err != nil {
+		_ = s.objects.Delete(ctx, []string{key})
 		return nil, err
 	}
 
@@ -85,17 +88,9 @@ func (s *AvatarService) Upload(ctx context.Context, userID, fileName string, dat
 		UserID:   userID,
 		S3Key:    key,
 	}
-	if err := s.publisher.PublishUpload(ctx, event); err != nil {
-		return nil, fmt.Errorf("publish upload event: %w", err)
+	if err := s.enqueueAndPublish(ctx, domain.OutboxUpload, event.EventID, event); err != nil {
+		slog.Warn("upload published later via outbox", "avatar_id", id, "err", err)
 	}
-	_ = s.publisher.PublishProcess(ctx, domain.AvatarProcessEvent{
-		EventID:  domain.ProcessEventID(id.String()),
-		AvatarID: id.String(),
-		Operations: []domain.ProcessingOp{
-			{Name: "thumbnail", Width: 100, Height: 100},
-			{Name: "thumbnail", Width: 300, Height: 300},
-		},
-	})
 	return avatar, nil
 }
 
@@ -153,11 +148,116 @@ func (s *AvatarService) publishDelete(ctx context.Context, a *domain.Avatar) err
 			keys = append(keys, k)
 		}
 	}
-	return s.publisher.PublishDelete(ctx, domain.AvatarDeleteEvent{
+	event := domain.AvatarDeleteEvent{
 		EventID:  domain.DeleteEventID(a.ID.String()),
 		AvatarID: a.ID.String(),
 		S3Keys:   keys,
-	})
+	}
+	if err := s.enqueueAndPublish(ctx, domain.OutboxDelete, event.EventID, event); err != nil {
+		slog.Warn("delete published later via outbox", "avatar_id", a.ID, "err", err)
+	}
+	return nil
+}
+
+func (s *AvatarService) enqueueAndPublish(ctx context.Context, kind, eventID string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	id, err := s.repo.EnqueueOutbox(ctx, domain.OutboxEvent{EventID: eventID, Kind: kind, Payload: body})
+	if err != nil {
+		if pubErr := s.publishKind(ctx, kind, body); pubErr != nil {
+			return fmt.Errorf("outbox: %w; publish: %w", err, pubErr)
+		}
+		return nil
+	}
+	if err := publishWithRetry(ctx, 3, func() error {
+		return s.publishKind(ctx, kind, body)
+	}); err != nil {
+		return err
+	}
+	return s.repo.MarkOutboxPublished(ctx, id)
+}
+
+func (s *AvatarService) publishKind(ctx context.Context, kind string, body []byte) error {
+	switch kind {
+	case domain.OutboxUpload:
+		var event domain.AvatarUploadEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			return err
+		}
+		return s.publisher.PublishUpload(ctx, event)
+	case domain.OutboxDelete:
+		var event domain.AvatarDeleteEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			return err
+		}
+		return s.publisher.PublishDelete(ctx, event)
+	default:
+		return fmt.Errorf("unknown outbox kind %s", kind)
+	}
+}
+
+func (s *AvatarService) FlushOutbox(ctx context.Context) error {
+	items, err := s.repo.ListUnpublished(ctx, 50)
+	if err != nil {
+		return err
+	}
+	var first error
+	for _, item := range items {
+		if err := publishWithRetry(ctx, 3, func() error {
+			return s.publishKind(ctx, item.Kind, item.Payload)
+		}); err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
+		}
+		if err := s.repo.MarkOutboxPublished(ctx, item.ID); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func (s *AvatarService) RecoverStuck(ctx context.Context) error {
+	items, err := s.repo.ListStuckUploads(ctx, 20)
+	if err != nil {
+		return err
+	}
+	var first error
+	for _, a := range items {
+		if err := s.ProcessUpload(ctx, domain.AvatarUploadEvent{
+			EventID:  domain.UploadEventID(a.ID.String()),
+			AvatarID: a.ID.String(),
+			UserID:   a.UserID,
+			S3Key:    a.S3Key,
+		}); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func publishWithRetry(ctx context.Context, attempts int, fn func() error) error {
+	backoff := 100 * time.Millisecond
+	var last error
+	for i := 0; i < attempts; i++ {
+		last = fn()
+		if last == nil {
+			return nil
+		}
+		if i == attempts-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+			backoff *= 2
+		}
+	}
+	return last
 }
 
 type ImagePayload struct {
@@ -188,7 +288,11 @@ func (s *AvatarService) FetchImage(ctx context.Context, avatar *domain.Avatar, s
 		return nil, err
 	}
 
-	if format != "" && format != imageutil.FormatFromMIME(contentType) && format != imageutil.FormatFromMIME(avatar.MimeType) {
+	current := imageutil.FormatFromMIME(contentType)
+	if current == "" {
+		current = imageutil.FormatFromMIME(avatar.MimeType)
+	}
+	if format != "" && format != current {
 		converted, mime, convErr := imageutil.Convert(data, format)
 		if convErr != nil {
 			return nil, convErr
@@ -216,21 +320,9 @@ func (s *AvatarService) PublicURL(id uuid.UUID, size string) string {
 }
 
 func (s *AvatarService) ProcessUpload(ctx context.Context, event domain.AvatarUploadEvent) error {
-	if event.EventID == "" {
-		event.EventID = domain.UploadEventID(event.AvatarID)
-	}
-	claimed, err := s.repo.ClaimEvent(ctx, event.EventID)
-	if err != nil {
-		return err
-	}
-	if !claimed {
-		return nil
-	}
-
 	id, err := uuid.Parse(event.AvatarID)
 	if err != nil {
-		_ = s.repo.ReleaseEvent(ctx, event.EventID)
-		return fmt.Errorf("invalid avatar_id: %w", err)
+		return domain.Permanent(fmt.Errorf("invalid avatar_id: %w", err))
 	}
 
 	avatar, err := s.repo.GetByID(ctx, id)
@@ -238,34 +330,33 @@ func (s *AvatarService) ProcessUpload(ctx context.Context, event domain.AvatarUp
 		return nil
 	}
 	if err != nil {
-		_ = s.repo.ReleaseEvent(ctx, event.EventID)
 		return err
 	}
 	if avatar.ProcessingStatus == domain.ProcessingCompleted {
 		return nil
 	}
+	if event.S3Key == "" {
+		event.S3Key = avatar.S3Key
+	}
 
 	ok, err := s.repo.MarkProcessing(ctx, id)
 	if err != nil {
-		_ = s.repo.ReleaseEvent(ctx, event.EventID)
 		return err
 	}
-	if !ok && avatar.ProcessingStatus == domain.ProcessingCompleted {
+	if !ok {
 		return nil
 	}
 
 	data, _, err := s.objects.Download(ctx, event.S3Key)
 	if err != nil {
 		_ = s.repo.FailProcessing(ctx, id)
-		_ = s.repo.ReleaseEvent(ctx, event.EventID)
 		return err
 	}
 
 	info, err := imageutil.Inspect(data)
 	if err != nil {
 		_ = s.repo.FailProcessing(ctx, id)
-		_ = s.repo.ReleaseEvent(ctx, event.EventID)
-		return err
+		return nil
 	}
 
 	thumbs := map[string]string{}
@@ -279,41 +370,21 @@ func (s *AvatarService) ProcessUpload(ctx context.Context, event domain.AvatarUp
 		body, mime, err := imageutil.MakeThumbnail(data, spec.w, spec.h, imageutil.FormatFromMIME(info.MIME))
 		if err != nil {
 			_ = s.repo.FailProcessing(ctx, id)
-			_ = s.repo.ReleaseEvent(ctx, event.EventID)
 			return err
 		}
 		key := domain.ThumbnailObjectKey(event.AvatarID, spec.size, imageutil.ExtForMIME(mime))
 		if err := s.objects.Upload(ctx, key, mime, body); err != nil {
 			_ = s.repo.FailProcessing(ctx, id)
-			_ = s.repo.ReleaseEvent(ctx, event.EventID)
 			return err
 		}
 		thumbs[spec.size] = key
 	}
 
-	if err := s.repo.CompleteProcessing(ctx, id, thumbs, info.Width, info.Height); err != nil {
-		_ = s.repo.ReleaseEvent(ctx, event.EventID)
-		return err
-	}
-	return nil
+	return s.repo.CompleteProcessing(ctx, id, thumbs, info.Width, info.Height)
 }
 
 func (s *AvatarService) ProcessDelete(ctx context.Context, event domain.AvatarDeleteEvent) error {
-	if event.EventID == "" {
-		event.EventID = domain.DeleteEventID(event.AvatarID)
-	}
-	claimed, err := s.repo.ClaimEvent(ctx, event.EventID)
-	if err != nil {
-		return err
-	}
-	if !claimed {
-		return nil
-	}
-	if err := s.objects.Delete(ctx, event.S3Keys); err != nil {
-		_ = s.repo.ReleaseEvent(ctx, event.EventID)
-		return err
-	}
-	return nil
+	return s.objects.Delete(ctx, event.S3Keys)
 }
 
 func sanitizeFileName(name, ext string) string {

@@ -40,9 +40,17 @@ func (emptyStore) MarkProcessing(context.Context, uuid.UUID) (bool, error) { ret
 func (emptyStore) CompleteProcessing(context.Context, uuid.UUID, map[string]string, int, int) error {
 	return nil
 }
-func (emptyStore) FailProcessing(context.Context, uuid.UUID) error  { return nil }
-func (emptyStore) ClaimEvent(context.Context, string) (bool, error) { return true, nil }
-func (emptyStore) ReleaseEvent(context.Context, string) error       { return nil }
+func (emptyStore) FailProcessing(context.Context, uuid.UUID) error { return nil }
+func (emptyStore) EnqueueOutbox(context.Context, domain.OutboxEvent) (int64, error) {
+	return 1, nil
+}
+func (emptyStore) ListUnpublished(context.Context, int) ([]domain.OutboxEvent, error) {
+	return nil, nil
+}
+func (emptyStore) MarkOutboxPublished(context.Context, int64) error { return nil }
+func (emptyStore) ListStuckUploads(context.Context, int) ([]domain.Avatar, error) {
+	return nil, nil
+}
 
 type emptyObj struct{}
 
@@ -54,9 +62,8 @@ func (emptyObj) Delete(context.Context, []string) error { return nil }
 
 type emptyPub struct{}
 
-func (emptyPub) PublishUpload(context.Context, domain.AvatarUploadEvent) error   { return nil }
-func (emptyPub) PublishDelete(context.Context, domain.AvatarDeleteEvent) error   { return nil }
-func (emptyPub) PublishProcess(context.Context, domain.AvatarProcessEvent) error { return nil }
+func (emptyPub) PublishUpload(context.Context, domain.AvatarUploadEvent) error { return nil }
+func (emptyPub) PublishDelete(context.Context, domain.AvatarDeleteEvent) error { return nil }
 
 func TestRouterHealthAndUploadPage(t *testing.T) {
 	svc := services.NewAvatarService(emptyStore{}, emptyObj{}, emptyPub{}, "http://localhost", domain.MaxFileSize)

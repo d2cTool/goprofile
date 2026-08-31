@@ -36,21 +36,47 @@ func New(svc *services.AvatarService, upload, deleteC *broker.Consumer, log *slo
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
 		errCh <- w.consume(ctx, w.upload, w.handleUpload)
 	}()
 	go func() {
 		errCh <- w.consume(ctx, w.delete, w.handleDelete)
 	}()
+	go func() {
+		errCh <- w.maintenance(ctx)
+	}()
 
 	var first error
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		if err := <-errCh; err != nil && first == nil {
 			first = err
 		}
 	}
 	return first
+}
+
+func (w *Worker) maintenance(ctx context.Context) error {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	w.runMaintenance(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			w.runMaintenance(ctx)
+		}
+	}
+}
+
+func (w *Worker) runMaintenance(ctx context.Context) {
+	if err := w.svc.FlushOutbox(ctx); err != nil {
+		w.log.Warn("flush outbox", "err", err)
+	}
+	if err := w.svc.RecoverStuck(ctx); err != nil {
+		w.log.Warn("recover stuck", "err", err)
+	}
 }
 
 func (w *Worker) consume(ctx context.Context, c *broker.Consumer, handle func(context.Context, kafka.Message) error) error {
@@ -65,6 +91,13 @@ func (w *Worker) consume(ctx context.Context, c *broker.Consumer, handle func(co
 		if err := w.withRetry(ctx, func() error {
 			return handle(ctx, msg)
 		}); err != nil {
+			if domain.IsPermanent(err) {
+				w.log.Error("dropping poison message", "topic", msg.Topic, "offset", msg.Offset, "err", err)
+				if cerr := c.Commit(ctx, msg); cerr != nil {
+					w.log.Error("commit poison failed", "err", cerr)
+				}
+				continue
+			}
 			w.log.Error("handle message failed", "topic", msg.Topic, "offset", msg.Offset, "err", err)
 			continue
 		}
@@ -77,7 +110,7 @@ func (w *Worker) consume(ctx context.Context, c *broker.Consumer, handle func(co
 func (w *Worker) handleUpload(ctx context.Context, msg kafka.Message) error {
 	var event domain.AvatarUploadEvent
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
-		return fmt.Errorf("decode upload event: %w", err)
+		return domain.Permanent(fmt.Errorf("decode upload event: %w", err))
 	}
 	event.EventID = broker.EventIDFrom(msg, event.EventID)
 	if event.EventID == "" {
@@ -89,7 +122,7 @@ func (w *Worker) handleUpload(ctx context.Context, msg kafka.Message) error {
 func (w *Worker) handleDelete(ctx context.Context, msg kafka.Message) error {
 	var event domain.AvatarDeleteEvent
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
-		return fmt.Errorf("decode delete event: %w", err)
+		return domain.Permanent(fmt.Errorf("decode delete event: %w", err))
 	}
 	event.EventID = broker.EventIDFrom(msg, event.EventID)
 	if event.EventID == "" {

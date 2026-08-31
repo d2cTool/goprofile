@@ -56,7 +56,9 @@ func (p *Producer) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return conn.Close()
+	defer conn.Close()
+	_, err = conn.Brokers()
+	return err
 }
 
 func (p *Producer) PublishUpload(ctx context.Context, event domain.AvatarUploadEvent) error {

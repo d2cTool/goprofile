@@ -113,13 +113,14 @@ function initGallery() {
         return;
       }
       grid.innerHTML = items.map((item) => {
-        const src = `/api/v1/avatars/${item.id}?size=300x300`;
+        const id = encodeURIComponent(item.id);
+        const src = `/api/v1/avatars/${id}?size=300x300`;
         return `
-          <article class="tile" data-id="${item.id}">
-            <img src="${src}" alt="${item.file_name}">
+          <article class="tile" data-id="${id}">
+            <img src="${src}" alt="${escapeHtml(item.file_name)}">
             <footer>
-              <span class="badge">${item.status}</span>
-              <button class="ghost" data-delete="${item.id}">Удалить</button>
+              <span class="badge">${escapeHtml(item.status)}</span>
+              <button class="ghost" data-delete="${id}">Удалить</button>
             </footer>
           </article>`;
       }).join("");
@@ -138,6 +139,15 @@ function initGallery() {
         });
       });
     });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 initNav();

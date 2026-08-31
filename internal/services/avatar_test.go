@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -17,16 +18,21 @@ import (
 type memRepo struct {
 	mu     sync.Mutex
 	items  map[uuid.UUID]*domain.Avatar
-	events map[string]struct{}
+	outbox []domain.OutboxEvent
+	nextID int64
+	fail   error
 }
 
 func newMemRepo() *memRepo {
-	return &memRepo{items: map[uuid.UUID]*domain.Avatar{}, events: map[string]struct{}{}}
+	return &memRepo{items: map[uuid.UUID]*domain.Avatar{}}
 }
 
 func (m *memRepo) Create(_ context.Context, a *domain.Avatar) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.fail != nil {
+		return m.fail
+	}
 	cp := *a
 	m.items[a.ID] = &cp
 	return nil
@@ -132,21 +138,43 @@ func (m *memRepo) FailProcessing(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (m *memRepo) ClaimEvent(_ context.Context, eventID string) (bool, error) {
+func (m *memRepo) EnqueueOutbox(_ context.Context, ev domain.OutboxEvent) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.events[eventID]; ok {
-		return false, nil
-	}
-	m.events[eventID] = struct{}{}
-	return true, nil
+	m.nextID++
+	ev.ID = m.nextID
+	m.outbox = append(m.outbox, ev)
+	return ev.ID, nil
 }
 
-func (m *memRepo) ReleaseEvent(_ context.Context, eventID string) error {
+func (m *memRepo) ListUnpublished(_ context.Context, _ int) ([]domain.OutboxEvent, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.events, eventID)
+	return append([]domain.OutboxEvent(nil), m.outbox...), nil
+}
+
+func (m *memRepo) MarkOutboxPublished(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, ev := range m.outbox {
+		if ev.ID == id {
+			m.outbox = append(m.outbox[:i], m.outbox[i+1:]...)
+			break
+		}
+	}
 	return nil
+}
+
+func (m *memRepo) ListStuckUploads(_ context.Context, _ int) ([]domain.Avatar, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []domain.Avatar
+	for _, a := range m.items {
+		if a.DeletedAt == nil && a.ProcessingStatus != domain.ProcessingCompleted {
+			out = append(out, *a)
+		}
+	}
+	return out, nil
 }
 
 type memObjects struct {
@@ -211,7 +239,14 @@ func (m *memPub) PublishDelete(_ context.Context, event domain.AvatarDeleteEvent
 	return nil
 }
 
-func (m *memPub) PublishProcess(context.Context, domain.AvatarProcessEvent) error { return nil }
+type failPub struct{}
+
+func (failPub) PublishUpload(context.Context, domain.AvatarUploadEvent) error {
+	return errors.New("kafka down")
+}
+func (failPub) PublishDelete(context.Context, domain.AvatarDeleteEvent) error {
+	return errors.New("kafka down")
+}
 
 func pngBytes(t *testing.T) []byte {
 	t.Helper()
@@ -299,5 +334,33 @@ func TestUploadValidation(t *testing.T) {
 	}
 	if _, err := svc.Upload(context.Background(), "u", "a.png", []byte("not-image")); err != domain.ErrInvalidFileFormat {
 		t.Fatalf("format: %v", err)
+	}
+}
+
+func TestUploadCompensatesS3WhenCreateFails(t *testing.T) {
+	repo := newMemRepo()
+	repo.fail = errors.New("db down")
+	objects := newMemObjects()
+	svc := NewAvatarService(repo, objects, &memPub{}, "http://x", domain.MaxFileSize)
+	if _, err := svc.Upload(context.Background(), "alice", "a.png", pngBytes(t)); err == nil {
+		t.Fatal("expected create error")
+	}
+	if len(objects.data) != 0 {
+		t.Fatalf("s3 orphan %#v", objects.data)
+	}
+}
+
+func TestUploadSucceedsWhenPublishFails(t *testing.T) {
+	repo := newMemRepo()
+	svc := NewAvatarService(repo, newMemObjects(), failPub{}, "http://x", domain.MaxFileSize)
+	avatar, err := svc.Upload(context.Background(), "alice", "a.png", pngBytes(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if avatar.ID == uuid.Nil {
+		t.Fatal("avatar")
+	}
+	if len(repo.outbox) != 1 {
+		t.Fatalf("outbox %d", len(repo.outbox))
 	}
 }

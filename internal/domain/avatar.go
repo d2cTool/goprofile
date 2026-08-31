@@ -21,8 +21,18 @@ const (
 	Size100      = "100x100"
 	Size300      = "300x300"
 
-	MaxFileSize = 10 << 20
+	MaxFileSize  = 10 << 20
+	MaxPixels    = 20_000_000
+	OutboxUpload = "upload"
+	OutboxDelete = "delete"
 )
+
+type OutboxEvent struct {
+	ID      int64
+	EventID string
+	Kind    string
+	Payload []byte
+}
 
 var AllowedSizes = map[string]struct{}{
 	SizeOriginal: {},

@@ -130,10 +130,14 @@ func (r *AvatarRepository) MarkProcessing(ctx context.Context, id uuid.UUID) (bo
 	const q = `
 		UPDATE avatars
 		SET processing_status = $2, updated_at = NOW()
-		WHERE id = $1 AND deleted_at IS NULL AND processing_status IN ($3, $4)
+		WHERE id = $1 AND deleted_at IS NULL
+		  AND (
+		    processing_status IN ($3, $4)
+		    OR (processing_status = $5 AND updated_at < NOW() - INTERVAL '2 minutes')
+		  )
 		RETURNING id`
 	var got uuid.UUID
-	err := r.pool.QueryRow(ctx, q, id, domain.ProcessingProcessing, domain.ProcessingPending, domain.ProcessingFailed).Scan(&got)
+	err := r.pool.QueryRow(ctx, q, id, domain.ProcessingProcessing, domain.ProcessingPending, domain.ProcessingFailed, domain.ProcessingProcessing).Scan(&got)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -180,6 +184,80 @@ func (r *AvatarRepository) FailProcessing(ctx context.Context, id uuid.UUID) err
 		return fmt.Errorf("fail processing: %w", err)
 	}
 	return nil
+}
+
+func (r *AvatarRepository) EnqueueOutbox(ctx context.Context, ev domain.OutboxEvent) (int64, error) {
+	var id int64
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO outbox_events (event_id, kind, payload)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (event_id) DO UPDATE SET kind = EXCLUDED.kind
+		RETURNING id`, ev.EventID, ev.Kind, ev.Payload).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("enqueue outbox: %w", err)
+	}
+	return id, nil
+}
+
+func (r *AvatarRepository) ListUnpublished(ctx context.Context, limit int) ([]domain.OutboxEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, event_id, kind, payload
+		FROM outbox_events
+		WHERE published_at IS NULL
+		ORDER BY id
+		LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list outbox: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.OutboxEvent
+	for rows.Next() {
+		var ev domain.OutboxEvent
+		if err := rows.Scan(&ev.ID, &ev.EventID, &ev.Kind, &ev.Payload); err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
+func (r *AvatarRepository) MarkOutboxPublished(ctx context.Context, id int64) error {
+	_, err := r.pool.Exec(ctx, `UPDATE outbox_events SET published_at = NOW() WHERE id = $1`, id)
+	return err
+}
+
+func (r *AvatarRepository) ListStuckUploads(ctx context.Context, limit int) ([]domain.Avatar, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, user_id, file_name, mime_type, size_bytes, width, height,
+		       s3_key, COALESCE(thumbnail_s3_keys, '{}'::jsonb), upload_status, processing_status,
+		       created_at, updated_at, deleted_at
+		FROM avatars
+		WHERE deleted_at IS NULL
+		  AND (
+		    processing_status IN ($1, $2)
+		    OR (processing_status = $3 AND updated_at < NOW() - INTERVAL '2 minutes')
+		  )
+		ORDER BY created_at
+		LIMIT $4`, domain.ProcessingPending, domain.ProcessingFailed, domain.ProcessingProcessing, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list stuck: %w", err)
+	}
+	defer rows.Close()
+	var out []domain.Avatar
+	for rows.Next() {
+		a, err := scanAvatar(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
 }
 
 func (r *AvatarRepository) ClaimEvent(ctx context.Context, eventID string) (bool, error) {

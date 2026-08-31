@@ -73,7 +73,7 @@ func (h *WebHandler) UploadForm(w http.ResponseWriter, r *http.Request) {
 
 	avatar, err := h.avatars.svc.Upload(r.Context(), userID, header.Filename, data)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, err)
 		return
 	}
 	http.Redirect(w, r, "/web/gallery/"+avatar.UserID, http.StatusSeeOther)

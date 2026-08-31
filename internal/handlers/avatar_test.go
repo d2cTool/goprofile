@@ -72,9 +72,17 @@ func (s *stubRepo) MarkProcessing(context.Context, uuid.UUID) (bool, error) { re
 func (s *stubRepo) CompleteProcessing(context.Context, uuid.UUID, map[string]string, int, int) error {
 	return nil
 }
-func (s *stubRepo) FailProcessing(context.Context, uuid.UUID) error  { return nil }
-func (s *stubRepo) ClaimEvent(context.Context, string) (bool, error) { return true, nil }
-func (s *stubRepo) ReleaseEvent(context.Context, string) error       { return nil }
+func (s *stubRepo) FailProcessing(context.Context, uuid.UUID) error { return nil }
+func (s *stubRepo) EnqueueOutbox(context.Context, domain.OutboxEvent) (int64, error) {
+	return 1, nil
+}
+func (s *stubRepo) ListUnpublished(context.Context, int) ([]domain.OutboxEvent, error) {
+	return nil, nil
+}
+func (s *stubRepo) MarkOutboxPublished(context.Context, int64) error { return nil }
+func (s *stubRepo) ListStuckUploads(context.Context, int) ([]domain.Avatar, error) {
+	return nil, nil
+}
 
 type stubObj struct{ store map[string][]byte }
 
@@ -96,9 +104,8 @@ func (s *stubObj) Delete(context.Context, []string) error { return nil }
 
 type stubPub struct{}
 
-func (stubPub) PublishUpload(context.Context, domain.AvatarUploadEvent) error   { return nil }
-func (stubPub) PublishDelete(context.Context, domain.AvatarDeleteEvent) error   { return nil }
-func (stubPub) PublishProcess(context.Context, domain.AvatarProcessEvent) error { return nil }
+func (stubPub) PublishUpload(context.Context, domain.AvatarUploadEvent) error { return nil }
+func (stubPub) PublishDelete(context.Context, domain.AvatarDeleteEvent) error { return nil }
 
 func pngFile(t *testing.T) []byte {
 	t.Helper()
@@ -195,6 +202,7 @@ func TestWriteErrorMapping(t *testing.T) {
 		{domain.ErrForbidden, http.StatusForbidden},
 		{domain.ErrFileTooLarge, http.StatusRequestEntityTooLarge},
 		{domain.ErrInvalidFileFormat, http.StatusBadRequest},
+		{domain.ErrImageTooLarge, http.StatusBadRequest},
 		{io.EOF, http.StatusInternalServerError},
 	}
 	for _, tc := range cases {

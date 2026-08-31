@@ -40,6 +40,11 @@ func writeError(w http.ResponseWriter, err error) {
 			"error":   "Invalid file format",
 			"details": "Supported formats: jpeg, png, webp",
 		})
+	case errors.Is(err, domain.ErrImageTooLarge):
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":   "Image too large",
+			"details": "Maximum resolution is 20 megapixels",
+		})
 	case errors.Is(err, domain.ErrInvalidSizeParam):
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error":   "Invalid size",
