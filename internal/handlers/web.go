@@ -7,16 +7,17 @@ import (
 	"strings"
 
 	"github.com/d2cTool/goprofile/internal/domain"
+	"github.com/d2cTool/goprofile/internal/services"
 	"github.com/d2cTool/goprofile/web"
 )
 
 type WebHandler struct {
-	avatars  *AvatarHandler
+	svc      *services.AvatarService
 	static   http.Handler
 	maxBytes int64
 }
 
-func NewWebHandler(avatars *AvatarHandler, maxBytes int64) (*WebHandler, error) {
+func NewWebHandler(svc *services.AvatarService, maxBytes int64) (*WebHandler, error) {
 	sub, err := fs.Sub(web.FS, ".")
 	if err != nil {
 		return nil, err
@@ -25,7 +26,7 @@ func NewWebHandler(avatars *AvatarHandler, maxBytes int64) (*WebHandler, error) 
 		maxBytes = domain.MaxFileSize
 	}
 	return &WebHandler{
-		avatars:  avatars,
+		svc:      svc,
 		static:   http.FileServer(http.FS(sub)),
 		maxBytes: maxBytes,
 	}, nil
@@ -59,7 +60,7 @@ func (h *WebHandler) UploadForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "file is required", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(file, h.maxBytes+1))
 	if err != nil {
@@ -71,7 +72,7 @@ func (h *WebHandler) UploadForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	avatar, err := h.avatars.svc.Upload(r.Context(), userID, header.Filename, data)
+	avatar, err := h.svc.Upload(r.Context(), userID, header.Filename, data)
 	if err != nil {
 		writeError(w, err)
 		return

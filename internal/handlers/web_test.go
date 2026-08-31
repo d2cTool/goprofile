@@ -10,7 +10,7 @@ import (
 
 func TestUploadPage(t *testing.T) {
 	h, _ := newTestHandler()
-	webh, err := NewWebHandler(h, 1<<20)
+	webh, err := NewWebHandler(h.svc, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,11 +28,18 @@ func TestUploadPage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("gallery %d", rec.Code)
 	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/static/app.css", nil)
+	webh.Static(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("static %d", rec.Code)
+	}
 }
 
 func TestUploadForm(t *testing.T) {
 	h, _ := newTestHandler()
-	webh, err := NewWebHandler(h, 1<<20)
+	webh, err := NewWebHandler(h.svc, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

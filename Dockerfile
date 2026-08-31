@@ -4,15 +4,15 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o server ./cmd/server
-RUN CGO_ENABLED=0 GOOS=linux go build -o worker ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
+ && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
 
 # Runtime stage
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates tzdata
-WORKDIR /root/
-COPY --from=builder /app/server .
-COPY --from=builder /app/worker .
-COPY --from=builder /app/web ./web/
+FROM alpine:3.21
+RUN apk --no-cache add ca-certificates tzdata \
+ && adduser -D -H -u 10001 app
+WORKDIR /app
+COPY --from=builder /out/server /out/worker ./
+USER app
 EXPOSE 8080
 CMD ["./server"]

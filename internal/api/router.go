@@ -15,7 +15,6 @@ import (
 func NewRouter(cfg config.Config, avatars *handlers.AvatarHandler, health *handlers.HealthHandler, web *handlers.WebHandler) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(60 * time.Second))

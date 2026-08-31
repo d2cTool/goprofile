@@ -36,7 +36,7 @@ func main() {
 	defer deps.Close()
 
 	avatars := handlers.NewAvatarHandler(deps.Service, cfg.MaxUploadBytes)
-	webh, err := handlers.NewWebHandler(avatars, cfg.MaxUploadBytes)
+	webh, err := handlers.NewWebHandler(deps.Service, cfg.MaxUploadBytes)
 	if err != nil {
 		log.Error("web", "err", err)
 		os.Exit(1)

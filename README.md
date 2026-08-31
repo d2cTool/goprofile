@@ -47,8 +47,10 @@ make run-worker
 - `avatar.process` — операции ресайза
 - `avatar.deleted` — асинхронное удаление объектов из S3
 
-## Тесты
+## Тесты и линт
 
 ```bash
-go test ./... -cover
+make test
+make cover   # суммарно >50%
+make lint    # golangci-lint v2
 ```

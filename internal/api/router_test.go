@@ -68,7 +68,7 @@ func (emptyPub) PublishDelete(context.Context, domain.AvatarDeleteEvent) error {
 func TestRouterHealthAndUploadPage(t *testing.T) {
 	svc := services.NewAvatarService(emptyStore{}, emptyObj{}, emptyPub{}, "http://localhost", domain.MaxFileSize)
 	avatars := handlers.NewAvatarHandler(svc, domain.MaxFileSize)
-	webh, err := handlers.NewWebHandler(avatars, domain.MaxFileSize)
+	webh, err := handlers.NewWebHandler(svc, domain.MaxFileSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,5 +95,11 @@ func TestRouterHealthAndUploadPage(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusFound {
 		t.Fatalf("root %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/web/static/app.css", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("static %d", rec.Code)
 	}
 }

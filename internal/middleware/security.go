@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"time"
 
@@ -26,23 +27,21 @@ func RateLimit(rps int) func(http.Handler) http.Handler {
 	if rps <= 0 {
 		rps = 20
 	}
-	return httprate.Limit(
-		rps,
-		time.Second,
-		httprate.WithKeyFuncs(httprate.KeyByIP, httprate.KeyByEndpoint),
-	)
+	return httprate.LimitBy(rps, time.Second, func(r *http.Request) (string, error) {
+		return clientIP(r) + ":" + r.Method + ":" + r.URL.Path, nil
+	})
 }
 
 func UploadRateLimit() func(http.Handler) http.Handler {
-	return httprate.Limit(
+	return httprate.LimitBy(
 		10,
 		time.Minute,
-		httprate.WithKeyFuncs(func(r *http.Request) (string, error) {
+		func(r *http.Request) (string, error) {
 			if id := r.Header.Get(HeaderUserID); id != "" {
 				return id, nil
 			}
-			return httprate.KeyByIP(r)
-		}),
+			return clientIP(r), nil
+		},
 		httprate.WithLimitHandler(func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{
 				"error": "Too many upload requests",
@@ -58,4 +57,12 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }

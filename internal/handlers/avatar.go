@@ -42,7 +42,7 @@ func (h *AvatarHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, domain.ErrFileRequired)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	limited := io.LimitReader(file, h.maxBytes+1)
 	data, err := io.ReadAll(limited)

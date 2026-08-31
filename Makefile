@@ -1,4 +1,4 @@
-.PHONY: tidy test lint run-server run-worker compose-up compose-down
+.PHONY: tidy test cover lint run-server run-worker compose-up compose-down
 
 tidy:
 	go mod tidy
@@ -7,11 +7,11 @@ test:
 	go test ./... -count=1 -cover
 
 cover:
-	go test ./... -coverprofile=coverage.out
+	go test "-coverpkg=./..." ./... "-coverprofile=coverage.out" -count=1
 	go tool cover -func=coverage.out
 
 lint:
-	golangci-lint run ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run ./...
 
 run-server:
 	go run ./cmd/server

@@ -260,21 +260,6 @@ func (r *AvatarRepository) ListStuckUploads(ctx context.Context, limit int) ([]d
 	return out, rows.Err()
 }
 
-func (r *AvatarRepository) ClaimEvent(ctx context.Context, eventID string) (bool, error) {
-	tag, err := r.pool.Exec(ctx, `
-		INSERT INTO processed_events (event_id) VALUES ($1)
-		ON CONFLICT (event_id) DO NOTHING`, eventID)
-	if err != nil {
-		return false, fmt.Errorf("claim event: %w", err)
-	}
-	return tag.RowsAffected() == 1, nil
-}
-
-func (r *AvatarRepository) ReleaseEvent(ctx context.Context, eventID string) error {
-	_, err := r.pool.Exec(ctx, `DELETE FROM processed_events WHERE event_id = $1`, eventID)
-	return err
-}
-
 func jsonBytes(v map[string]string) ([]byte, error) {
 	a := domain.Avatar{ThumbnailS3Keys: v}
 	return a.ThumbnailKeysJSON(), nil

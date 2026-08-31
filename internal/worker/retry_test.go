@@ -8,6 +8,13 @@ import (
 	"testing"
 )
 
+func TestNewWorker(t *testing.T) {
+	w := New(nil, nil, nil, nil)
+	if w == nil || w.attempts != 5 || w.log == nil {
+		t.Fatal("defaults")
+	}
+}
+
 func TestWithRetry(t *testing.T) {
 	w := &Worker{log: slog.New(slog.NewTextHandler(io.Discard, nil)), attempts: 3}
 	n := 0

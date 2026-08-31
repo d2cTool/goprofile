@@ -35,8 +35,8 @@ func main() {
 
 	uploadC := broker.NewConsumer(cfg, cfg.TopicUpload)
 	deleteC := broker.NewConsumer(cfg, cfg.TopicDelete)
-	defer uploadC.Close()
-	defer deleteC.Close()
+	defer func() { _ = uploadC.Close() }()
+	defer func() { _ = deleteC.Close() }()
 
 	log.Info("worker started", "upload_topic", cfg.TopicUpload, "delete_topic", cfg.TopicDelete)
 	if err := worker.New(deps.Service, uploadC, deleteC, log).Run(ctx); err != nil {

@@ -16,7 +16,6 @@ import (
 type Producer struct {
 	upload  *kafka.Writer
 	delete  *kafka.Writer
-	process *kafka.Writer
 	brokers []string
 }
 
@@ -24,7 +23,6 @@ func NewProducer(cfg config.Config) *Producer {
 	return &Producer{
 		upload:  newWriter(cfg.KafkaBrokers, cfg.TopicUpload),
 		delete:  newWriter(cfg.KafkaBrokers, cfg.TopicDelete),
-		process: newWriter(cfg.KafkaBrokers, cfg.TopicProcess),
 		brokers: cfg.KafkaBrokers,
 	}
 }
@@ -42,7 +40,7 @@ func newWriter(brokers []string, topic string) *kafka.Writer {
 
 func (p *Producer) Close() error {
 	var first error
-	for _, w := range []*kafka.Writer{p.upload, p.delete, p.process} {
+	for _, w := range []*kafka.Writer{p.upload, p.delete} {
 		if err := w.Close(); err != nil && first == nil {
 			first = err
 		}
@@ -56,7 +54,7 @@ func (p *Producer) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_, err = conn.Brokers()
 	return err
 }
@@ -67,10 +65,6 @@ func (p *Producer) PublishUpload(ctx context.Context, event domain.AvatarUploadE
 
 func (p *Producer) PublishDelete(ctx context.Context, event domain.AvatarDeleteEvent) error {
 	return writeJSON(ctx, p.delete, event.AvatarID, event.EventID, event)
-}
-
-func (p *Producer) PublishProcess(ctx context.Context, event domain.AvatarProcessEvent) error {
-	return writeJSON(ctx, p.process, event.AvatarID, event.EventID, event)
 }
 
 func writeJSON(ctx context.Context, w *kafka.Writer, key, eventID string, payload any) error {
@@ -145,7 +139,7 @@ func createTopics(ctx context.Context, broker string, topics []string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	controller, err := conn.Controller()
 	if err != nil {
@@ -156,7 +150,7 @@ func createTopics(ctx context.Context, broker string, topics []string) error {
 	if err != nil {
 		return err
 	}
-	defer ctrl.Close()
+	defer func() { _ = ctrl.Close() }()
 
 	configs := make([]kafka.TopicConfig, 0, len(topics))
 	for _, t := range topics {

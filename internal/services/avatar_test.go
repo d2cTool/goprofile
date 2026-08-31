@@ -364,3 +364,34 @@ func TestUploadSucceedsWhenPublishFails(t *testing.T) {
 		t.Fatalf("outbox %d", len(repo.outbox))
 	}
 }
+
+func TestFlushOutboxAndRecoverStuck(t *testing.T) {
+	repo := newMemRepo()
+	objects := newMemObjects()
+	pub := &memPub{}
+	svc := NewAvatarService(repo, objects, pub, "http://x", domain.MaxFileSize)
+	ctx := context.Background()
+
+	avatar, err := svc.Upload(ctx, "alice", "a.png", pngBytes(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = repo.EnqueueOutbox(ctx, domain.OutboxEvent{
+		EventID: "upload:" + avatar.ID.String() + ":retry",
+		Kind:    domain.OutboxUpload,
+		Payload: []byte(`{"avatar_id":"` + avatar.ID.String() + `","user_id":"alice","s3_key":"` + avatar.S3Key + `"}`),
+	})
+	if err := svc.FlushOutbox(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RecoverStuck(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Get(ctx, avatar.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProcessingStatus != domain.ProcessingCompleted {
+		t.Fatalf("status %s", got.ProcessingStatus)
+	}
+}

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -69,7 +68,7 @@ func (s *S3) Download(ctx context.Context, key string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("get object %s: %w", key, err)
 	}
-	defer obj.Close()
+	defer func() { _ = obj.Close() }()
 
 	info, err := obj.Stat()
 	if err != nil {
@@ -94,12 +93,4 @@ func (s *S3) Delete(ctx context.Context, keys []string) error {
 		}
 	}
 	return nil
-}
-
-func (s *S3) PresignedURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
-	u, err := s.client.PresignedGetObject(ctx, s.bucket, key, expiry, nil)
-	if err != nil {
-		return "", err
-	}
-	return u.String(), nil
 }

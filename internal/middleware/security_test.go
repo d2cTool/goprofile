@@ -31,6 +31,19 @@ func TestCORS(t *testing.T) {
 	}
 }
 
+func TestUploadRateLimit(t *testing.T) {
+	h := UploadRateLimit()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/avatars", nil)
+	req.Header.Set(HeaderUserID, "lint-user")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+}
+
 func TestRateLimit(t *testing.T) {
 	h := RateLimit(0)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
