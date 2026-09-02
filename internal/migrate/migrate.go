@@ -65,12 +65,28 @@ func Up(ctx context.Context, pool *pgxpool.Pool) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", name, err)
 		}
-		if _, err := conn.Exec(ctx, string(sqlBytes)); err != nil {
-			return fmt.Errorf("apply %s: %w", name, err)
+		if err := applyFile(ctx, conn, name, version, string(sqlBytes)); err != nil {
+			return err
 		}
-		if _, err := conn.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT DO NOTHING`, version); err != nil {
-			return fmt.Errorf("record %s: %w", name, err)
-		}
+	}
+	return nil
+}
+
+func applyFile(ctx context.Context, conn *pgxpool.Conn, name string, version int, sql string) error {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin %s: %w", name, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, sql); err != nil {
+		return fmt.Errorf("apply %s: %w", name, err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO schema_migrations (version) VALUES ($1)`, version); err != nil {
+		return fmt.Errorf("record %s: %w", name, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit %s: %w", name, err)
 	}
 	return nil
 }

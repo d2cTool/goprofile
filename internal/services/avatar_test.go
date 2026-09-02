@@ -270,6 +270,15 @@ func TestUploadGetDeleteAndProcess(t *testing.T) {
 	if avatar.UserID != "alice" || avatar.MimeType != "image/png" {
 		t.Fatalf("%+v", avatar)
 	}
+	if len(pub.uploads) != 0 {
+		t.Fatal("upload must not publish kafka synchronously")
+	}
+	if len(repo.outbox) != 1 {
+		t.Fatalf("outbox %d", len(repo.outbox))
+	}
+	if err := svc.FlushOutbox(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if len(pub.uploads) != 1 {
 		t.Fatal("upload event not published")
 	}
@@ -309,6 +318,12 @@ func TestUploadGetDeleteAndProcess(t *testing.T) {
 	}
 	if _, err := svc.Get(ctx, avatar.ID); err != domain.ErrAvatarNotFound {
 		t.Fatalf("expected not found, got %v", err)
+	}
+	if len(pub.deletes) != 0 {
+		t.Fatal("delete must not publish kafka synchronously")
+	}
+	if err := svc.FlushOutbox(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if len(pub.deletes) != 1 {
 		t.Fatal("delete event not published")

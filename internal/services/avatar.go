@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -89,12 +88,10 @@ func (s *AvatarService) Upload(ctx context.Context, userID, fileName string, dat
 		_ = s.objects.Delete(ctx, []string{key})
 		return nil, err
 	}
-	outboxID, err := s.repo.CreateWithOutbox(ctx, avatar, ev)
-	if err != nil {
+	if _, err := s.repo.CreateWithOutbox(ctx, avatar, ev); err != nil {
 		_ = s.objects.Delete(ctx, []string{key})
 		return nil, err
 	}
-	s.publishCommitted(ctx, outboxID, ev)
 	return avatar, nil
 }
 
@@ -131,11 +128,9 @@ func (s *AvatarService) Delete(ctx context.Context, id uuid.UUID, userID string)
 	if err != nil {
 		return err
 	}
-	_, outboxID, err := s.repo.SoftDeleteOwnedWithOutbox(ctx, id, userID, ev)
-	if err != nil {
+	if _, _, err := s.repo.SoftDeleteOwnedWithOutbox(ctx, id, userID, ev); err != nil {
 		return err
 	}
-	s.publishCommitted(ctx, outboxID, ev)
 	return nil
 }
 
@@ -171,18 +166,6 @@ func newOutboxEvent(kind, eventID string, payload any) (domain.OutboxEvent, erro
 		return domain.OutboxEvent{}, err
 	}
 	return domain.OutboxEvent{EventID: eventID, Kind: kind, Payload: body}, nil
-}
-
-func (s *AvatarService) publishCommitted(ctx context.Context, outboxID int64, ev domain.OutboxEvent) {
-	if err := publishWithRetry(ctx, 3, func() error {
-		return s.publishKind(ctx, ev.Kind, ev.Payload)
-	}); err != nil {
-		slog.Warn("outbox publish deferred to worker", "outbox_id", outboxID, "event_id", ev.EventID, "err", err)
-		return
-	}
-	if err := s.repo.MarkOutboxPublished(ctx, outboxID); err != nil {
-		slog.Warn("mark outbox published", "outbox_id", outboxID, "err", err)
-	}
 }
 
 func (s *AvatarService) publishKind(ctx context.Context, kind string, body []byte) error {

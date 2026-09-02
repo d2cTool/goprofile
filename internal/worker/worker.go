@@ -16,8 +16,8 @@ import (
 
 type Worker struct {
 	svc      *services.AvatarService
-	upload   *broker.Consumer
-	delete   *broker.Consumer
+	upload   kafkaCursor
+	delete   kafkaCursor
 	log      *slog.Logger
 	attempts int
 }
@@ -36,16 +36,22 @@ func New(svc *services.AvatarService, upload, deleteC *broker.Consumer, log *slo
 }
 
 func (w *Worker) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	errCh := make(chan error, 3)
-	go func() {
-		errCh <- w.consume(ctx, w.upload, w.handleUpload)
-	}()
-	go func() {
-		errCh <- w.consume(ctx, w.delete, w.handleDelete)
-	}()
-	go func() {
-		errCh <- w.maintenance(ctx)
-	}()
+	run := func(fn func() error) {
+		go func() {
+			err := fn()
+			if err != nil {
+				cancel()
+			}
+			errCh <- err
+		}()
+	}
+	run(func() error { return w.consume(ctx, w.upload, w.handleUpload) })
+	run(func() error { return w.consume(ctx, w.delete, w.handleDelete) })
+	run(func() error { return w.maintenance(ctx) })
 
 	var first error
 	for i := 0; i < 3; i++ {
@@ -79,7 +85,12 @@ func (w *Worker) runMaintenance(ctx context.Context) {
 	}
 }
 
-func (w *Worker) consume(ctx context.Context, c *broker.Consumer, handle func(context.Context, kafka.Message) error) error {
+type kafkaCursor interface {
+	Fetch(ctx context.Context) (kafka.Message, error)
+	Commit(ctx context.Context, msg kafka.Message) error
+}
+
+func (w *Worker) consume(ctx context.Context, c kafkaCursor, handle func(context.Context, kafka.Message) error) error {
 	for {
 		msg, err := c.Fetch(ctx)
 		if err != nil {
@@ -93,16 +104,16 @@ func (w *Worker) consume(ctx context.Context, c *broker.Consumer, handle func(co
 		}); err != nil {
 			if domain.IsPermanent(err) {
 				w.log.Error("dropping poison message", "topic", msg.Topic, "offset", msg.Offset, "err", err)
-				if cerr := c.Commit(ctx, msg); cerr != nil {
-					w.log.Error("commit poison failed", "err", cerr)
-				}
-				continue
+			} else {
+				w.log.Error("dropping after retries", "topic", msg.Topic, "offset", msg.Offset, "err", err)
 			}
-			w.log.Error("handle message failed", "topic", msg.Topic, "offset", msg.Offset, "err", err)
+			if cerr := c.Commit(ctx, msg); cerr != nil {
+				return fmt.Errorf("commit dropped message: %w", cerr)
+			}
 			continue
 		}
 		if err := c.Commit(ctx, msg); err != nil {
-			w.log.Error("commit failed", "topic", msg.Topic, "err", err)
+			return fmt.Errorf("commit: %w", err)
 		}
 	}
 }
@@ -139,7 +150,7 @@ func (w *Worker) withRetry(ctx context.Context, fn func() error) error {
 		if last == nil {
 			return nil
 		}
-		if i == w.attempts-1 {
+		if domain.IsPermanent(last) || i == w.attempts-1 {
 			break
 		}
 		w.log.Warn("retrying", "attempt", i+1, "err", last)
