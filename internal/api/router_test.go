@@ -1,0 +1,101 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/d2cTool/goprofile/internal/config"
+	"github.com/d2cTool/goprofile/internal/domain"
+	"github.com/d2cTool/goprofile/internal/handlers"
+	"github.com/d2cTool/goprofile/internal/services"
+)
+
+type healthPinger struct{}
+
+func (healthPinger) Ping(context.Context) error { return nil }
+
+type emptyStore struct{}
+
+func (emptyStore) CreateWithOutbox(context.Context, *domain.Avatar, domain.OutboxEvent) (int64, error) {
+	return 1, nil
+}
+func (emptyStore) GetByID(context.Context, uuid.UUID) (*domain.Avatar, error) {
+	return nil, domain.ErrAvatarNotFound
+}
+func (emptyStore) GetLatestByUserID(context.Context, string) (*domain.Avatar, error) {
+	return nil, domain.ErrAvatarNotFound
+}
+func (emptyStore) ListByUserID(context.Context, string) ([]domain.Avatar, error) {
+	return []domain.Avatar{}, nil
+}
+func (emptyStore) SoftDeleteOwnedWithOutbox(context.Context, uuid.UUID, string, domain.OutboxEvent) (*domain.Avatar, int64, error) {
+	return nil, 0, domain.ErrAvatarNotFound
+}
+func (emptyStore) MarkProcessing(context.Context, uuid.UUID) (bool, error) { return false, nil }
+func (emptyStore) CompleteProcessing(context.Context, uuid.UUID, map[string]string, int, int) error {
+	return nil
+}
+func (emptyStore) FailProcessing(context.Context, uuid.UUID) error { return nil }
+func (emptyStore) ListUnpublished(context.Context, int) ([]domain.OutboxEvent, error) {
+	return nil, nil
+}
+func (emptyStore) MarkOutboxPublished(context.Context, int64) error { return nil }
+func (emptyStore) ListStuckUploads(context.Context, int) ([]domain.Avatar, error) {
+	return nil, nil
+}
+
+type emptyObj struct{}
+
+func (emptyObj) Upload(context.Context, string, string, []byte) error { return nil }
+func (emptyObj) Download(context.Context, string) ([]byte, string, error) {
+	return nil, "", domain.ErrAvatarNotFound
+}
+func (emptyObj) Delete(context.Context, []string) error { return nil }
+
+type emptyPub struct{}
+
+func (emptyPub) PublishUpload(context.Context, domain.AvatarUploadEvent) error { return nil }
+func (emptyPub) PublishDelete(context.Context, domain.AvatarDeleteEvent) error { return nil }
+
+func TestRouterHealthAndUploadPage(t *testing.T) {
+	svc := services.NewAvatarService(emptyStore{}, emptyObj{}, emptyPub{}, "http://localhost", domain.MaxFileSize)
+	avatars := handlers.NewAvatarHandler(svc, domain.MaxFileSize)
+	webh, err := handlers.NewWebHandler(svc, domain.MaxFileSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewRouter(
+		config.Config{CORSOrigins: []string{"*"}, RateLimitRPS: 100},
+		avatars,
+		&handlers.HealthHandler{DB: healthPinger{}, S3: healthPinger{}, Kafka: healthPinger{}},
+		webh,
+	)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/web/upload", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload page %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("root %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/web/static/app.css", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("static %d", rec.Code)
+	}
+}

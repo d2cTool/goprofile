@@ -1,0 +1,15 @@
+.git
+.gitignore
+.idea
+.vscode
+*.md
+.env
+.env.example
+coverage.out
+c.out
+**/coverage
+k8s
+tests
+**/*_test.go
+.golangci.yml
+LICENSE

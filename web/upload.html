@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GophProfile — загрузка аватарки</title>
+  <link rel="stylesheet" href="/web/static/app.css">
+</head>
+<body>
+  <main class="page">
+    <header class="top">
+      <a class="logo" href="/web/upload">GophProfile</a>
+      <nav>
+        <a href="/web/upload" class="active">Загрузка</a>
+        <a id="gallery-link" href="/web/gallery/demo">Галерея</a>
+      </nav>
+    </header>
+
+    <section class="card">
+      <h1>Загрузить аватарку</h1>
+      <p class="muted">JPEG, PNG или WebP. Максимум 10 МБ. Миниатюры 100×100 и 300×300 создаются асинхронно.</p>
+
+      <label class="field">
+        <span>User ID</span>
+        <input id="user-id" name="user_id" type="text" placeholder="alice" required>
+      </label>
+
+      <form id="upload-form" class="dropzone" action="/web/upload" method="post" enctype="multipart/form-data">
+        <input id="file-input" type="file" name="file" accept="image/jpeg,image/png,image/webp" required>
+        <div class="drop-label">
+          <strong>Перетащите файл сюда</strong>
+          <span>или нажмите, чтобы выбрать</span>
+        </div>
+        <img id="preview" alt="Превью" hidden>
+      </form>
+
+      <div class="row">
+        <button id="submit-btn" type="button">Загрузить</button>
+        <span id="status" class="muted"></span>
+      </div>
+      <div id="progress" class="progress" hidden><div></div></div>
+    </section>
+  </main>
+  <script src="/web/static/app.js"></script>
+</body>
+</html>
