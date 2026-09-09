@@ -13,20 +13,36 @@ import (
 	"github.com/d2cTool/goprofile/internal/app"
 	"github.com/d2cTool/goprofile/internal/config"
 	"github.com/d2cTool/goprofile/internal/handlers"
+	"github.com/d2cTool/goprofile/internal/observability"
 )
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(log)
-
 	cfg, err := config.Load()
 	if err != nil {
-		log.Error("config", "err", err)
+		slog.New(slog.NewJSONHandler(os.Stdout, nil)).Error("config", "err", err)
 		os.Exit(1)
+	}
+	if cfg.ServiceName == "" || cfg.ServiceName == "gophprofile" {
+		cfg.ServiceName = "gophprofile-server"
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	otelStop, err := observability.Setup(ctx, cfg.ServiceName, cfg.OTLPEndpoint)
+	if err != nil {
+		slog.New(slog.NewJSONHandler(os.Stdout, nil)).Error("otel", "err", err)
+		os.Exit(1)
+	}
+	log := observability.NewLogger(cfg.ServiceName, observability.ParseLevel(cfg.LogLevel))
+	slog.SetDefault(log)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout())
+		defer cancel()
+		if err := otelStop(shutdownCtx); err != nil {
+			log.Error("otel shutdown", "err", err)
+		}
+	}()
 
 	deps, err := app.New(ctx, cfg, log)
 	if err != nil {

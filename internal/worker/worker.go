@@ -9,8 +9,11 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/d2cTool/goprofile/internal/broker"
 	"github.com/d2cTool/goprofile/internal/domain"
+	"github.com/d2cTool/goprofile/internal/observability"
 	"github.com/d2cTool/goprofile/internal/services"
 )
 
@@ -99,19 +102,33 @@ func (w *Worker) consume(ctx context.Context, c kafkaCursor, handle func(context
 			}
 			return err
 		}
-		if err := w.withRetry(ctx, func() error {
-			return handle(ctx, msg)
-		}); err != nil {
+		msgCtx := observability.ExtractKafka(ctx, msg.Headers)
+		msgCtx, span := observability.Start(msgCtx, "kafka.consume",
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination", msg.Topic),
+			attribute.String("messaging.operation", "receive"),
+			attribute.Int64("messaging.kafka.offset", msg.Offset),
+			attribute.Int("messaging.kafka.partition", msg.Partition),
+		)
+		err = w.withRetry(msgCtx, func() error {
+			return handle(msgCtx, msg)
+		})
+		if err != nil {
+			observability.RecordError(span, err)
+			observability.KafkaMessages.WithLabelValues("consume", msg.Topic, "error").Inc()
 			if domain.IsPermanent(err) {
-				w.log.Error("dropping poison message", "topic", msg.Topic, "offset", msg.Offset, "err", err)
+				w.log.ErrorContext(msgCtx, "dropping poison message", "topic", msg.Topic, "offset", msg.Offset, "err", err)
 			} else {
-				w.log.Error("dropping after retries", "topic", msg.Topic, "offset", msg.Offset, "err", err)
+				w.log.ErrorContext(msgCtx, "dropping after retries", "topic", msg.Topic, "offset", msg.Offset, "err", err)
 			}
+			span.End()
 			if cerr := c.Commit(ctx, msg); cerr != nil {
 				return fmt.Errorf("commit dropped message: %w", cerr)
 			}
 			continue
 		}
+		observability.KafkaMessages.WithLabelValues("consume", msg.Topic, "ok").Inc()
+		span.End()
 		if err := c.Commit(ctx, msg); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
@@ -153,7 +170,7 @@ func (w *Worker) withRetry(ctx context.Context, fn func() error) error {
 		if domain.IsPermanent(last) || i == w.attempts-1 {
 			break
 		}
-		w.log.Warn("retrying", "attempt", i+1, "err", last)
+		w.log.WarnContext(ctx, "retrying", "attempt", i+1, "err", last)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

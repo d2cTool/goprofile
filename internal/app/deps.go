@@ -10,6 +10,7 @@ import (
 	"github.com/d2cTool/goprofile/internal/broker"
 	"github.com/d2cTool/goprofile/internal/config"
 	"github.com/d2cTool/goprofile/internal/migrate"
+	"github.com/d2cTool/goprofile/internal/observability"
 	"github.com/d2cTool/goprofile/internal/repository"
 	"github.com/d2cTool/goprofile/internal/services"
 	"github.com/d2cTool/goprofile/internal/storage"
@@ -26,10 +27,16 @@ type Deps struct {
 }
 
 func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Deps, error) {
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	poolCfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("postgres config: %w", err)
+	}
+	poolCfg.ConnConfig.Tracer = observability.NewPGXTracer()
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
+	observability.RegisterPoolCollector(pool)
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("postgres ping: %w", err)
