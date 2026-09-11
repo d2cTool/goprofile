@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/d2cTool/goprofile/internal/domain"
 	"github.com/d2cTool/goprofile/internal/imageutil"
+	"github.com/d2cTool/goprofile/internal/observability"
 )
 
 type AvatarService struct {
@@ -39,6 +41,36 @@ func NewAvatarService(repo AvatarStore, objects ObjectStore, publisher EventPubl
 }
 
 func (s *AvatarService) Upload(ctx context.Context, userID, fileName string, data []byte) (*domain.Avatar, error) {
+	ctx, span := observability.Start(ctx, "upload_avatar",
+		attribute.String("user_id", userID),
+		attribute.String("file_name", fileName),
+		attribute.Int64("file_size", int64(len(data))),
+	)
+	defer span.End()
+	start := time.Now()
+	avatar, err := s.upload(ctx, userID, fileName, data)
+	status := observability.StatusOK(err)
+	observability.UploadsTotal.WithLabelValues(status).Inc()
+	observability.UploadDuration.WithLabelValues(status).Observe(time.Since(start).Seconds())
+	if err != nil {
+		observability.RecordError(span, err)
+		return nil, err
+	}
+	observability.StorageUsage.Add(float64(avatar.SizeBytes))
+	span.SetAttributes(
+		attribute.String("avatar_id", avatar.ID.String()),
+		attribute.String("mime_type", avatar.MimeType),
+	)
+	observability.Logger(ctx).InfoContext(ctx, "uploading avatar",
+		"user_id", userID,
+		"avatar_id", avatar.ID.String(),
+		"file_size", avatar.SizeBytes,
+		"mime_type", avatar.MimeType,
+	)
+	return avatar, nil
+}
+
+func (s *AvatarService) upload(ctx context.Context, userID, fileName string, data []byte) (*domain.Avatar, error) {
 	if err := domain.ValidateUserID(userID); err != nil {
 		return nil, err
 	}
@@ -114,6 +146,22 @@ func (s *AvatarService) List(ctx context.Context, userID string) ([]domain.Avata
 }
 
 func (s *AvatarService) Delete(ctx context.Context, id uuid.UUID, userID string) error {
+	ctx, span := observability.Start(ctx, "delete_avatar",
+		attribute.String("avatar_id", id.String()),
+		attribute.String("user_id", userID),
+	)
+	defer span.End()
+	err := s.delete(ctx, id, userID)
+	observability.DeletesTotal.WithLabelValues(observability.StatusOK(err)).Inc()
+	if err != nil {
+		observability.RecordError(span, err)
+		return err
+	}
+	observability.Logger(ctx).InfoContext(ctx, "avatar deleted", "avatar_id", id.String(), "user_id", userID)
+	return nil
+}
+
+func (s *AvatarService) delete(ctx context.Context, id uuid.UUID, userID string) error {
 	if err := domain.ValidateUserID(userID); err != nil {
 		return err
 	}
@@ -131,6 +179,7 @@ func (s *AvatarService) Delete(ctx context.Context, id uuid.UUID, userID string)
 	if _, _, err := s.repo.SoftDeleteOwnedWithOutbox(ctx, id, userID, ev); err != nil {
 		return err
 	}
+	observability.StorageUsage.Sub(float64(existing.SizeBytes))
 	return nil
 }
 
@@ -188,10 +237,15 @@ func (s *AvatarService) publishKind(ctx context.Context, kind string, body []byt
 }
 
 func (s *AvatarService) FlushOutbox(ctx context.Context) error {
+	ctx, span := observability.Start(ctx, "outbox.flush")
+	defer span.End()
 	items, err := s.repo.ListUnpublished(ctx, 50)
 	if err != nil {
+		observability.RecordError(span, err)
 		return err
 	}
+	observability.OutboxUnpublished.Set(float64(len(items)))
+	span.SetAttributes(attribute.Int("outbox.size", len(items)))
 	var first error
 	for _, item := range items {
 		if err := publishWithRetry(ctx, 3, func() error {
@@ -206,6 +260,7 @@ func (s *AvatarService) FlushOutbox(ctx context.Context) error {
 			first = err
 		}
 	}
+	observability.RecordError(span, first)
 	return first
 }
 
@@ -309,6 +364,23 @@ func (s *AvatarService) PublicURL(id uuid.UUID, size string) string {
 }
 
 func (s *AvatarService) ProcessUpload(ctx context.Context, event domain.AvatarUploadEvent) error {
+	ctx, span := observability.Start(ctx, "process_upload",
+		attribute.String("avatar_id", event.AvatarID),
+		attribute.String("user_id", event.UserID),
+		attribute.String("event_id", event.EventID),
+	)
+	defer span.End()
+	err := s.processUpload(ctx, event)
+	observability.ProcessedTotal.WithLabelValues("upload", observability.StatusOK(err)).Inc()
+	if err != nil {
+		observability.RecordError(span, err)
+		return err
+	}
+	observability.Logger(ctx).InfoContext(ctx, "process upload done", "avatar_id", event.AvatarID)
+	return nil
+}
+
+func (s *AvatarService) processUpload(ctx context.Context, event domain.AvatarUploadEvent) error {
 	id, err := uuid.Parse(event.AvatarID)
 	if err != nil {
 		return domain.Permanent(fmt.Errorf("invalid avatar_id: %w", err))
@@ -373,7 +445,19 @@ func (s *AvatarService) ProcessUpload(ctx context.Context, event domain.AvatarUp
 }
 
 func (s *AvatarService) ProcessDelete(ctx context.Context, event domain.AvatarDeleteEvent) error {
-	return s.objects.Delete(ctx, event.S3Keys)
+	ctx, span := observability.Start(ctx, "process_delete",
+		attribute.String("avatar_id", event.AvatarID),
+		attribute.String("event_id", event.EventID),
+		attribute.Int("s3_keys", len(event.S3Keys)),
+	)
+	defer span.End()
+	err := s.objects.Delete(ctx, event.S3Keys)
+	observability.ProcessedTotal.WithLabelValues("delete", observability.StatusOK(err)).Inc()
+	if err != nil {
+		observability.RecordError(span, err)
+		return err
+	}
+	return nil
 }
 
 func sanitizeFileName(name, ext string) string {

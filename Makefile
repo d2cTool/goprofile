@@ -1,4 +1,4 @@
-COMPOSE := docker compose -f docker/docker-compose.yml
+COMPOSE := docker compose --env-file .env -f docker/docker-compose.yml
 
 .PHONY: tidy test cover lint run-server run-worker compose-up compose-down
 

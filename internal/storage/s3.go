@@ -10,8 +10,10 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/d2cTool/goprofile/internal/config"
+	"github.com/d2cTool/goprofile/internal/observability"
 )
 
 type S3 struct {
@@ -51,6 +53,12 @@ func (s *S3) Ping(ctx context.Context) error {
 }
 
 func (s *S3) Upload(ctx context.Context, key, contentType string, data []byte) error {
+	ctx, span := observability.Start(ctx, "s3.put",
+		attribute.String("s3.bucket", s.bucket),
+		attribute.String("s3.key", key),
+		attribute.Int("s3.size", len(data)),
+	)
+	defer span.End()
 	if contentType == "" {
 		contentType = http.DetectContentType(data)
 	}
@@ -58,30 +66,45 @@ func (s *S3) Upload(ctx context.Context, key, contentType string, data []byte) e
 		ContentType: contentType,
 	})
 	if err != nil {
+		observability.RecordError(span, err)
 		return fmt.Errorf("put object %s: %w", key, err)
 	}
 	return nil
 }
 
 func (s *S3) Download(ctx context.Context, key string) ([]byte, string, error) {
+	ctx, span := observability.Start(ctx, "s3.get",
+		attribute.String("s3.bucket", s.bucket),
+		attribute.String("s3.key", key),
+	)
+	defer span.End()
 	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
+		observability.RecordError(span, err)
 		return nil, "", fmt.Errorf("get object %s: %w", key, err)
 	}
 	defer func() { _ = obj.Close() }()
 
 	info, err := obj.Stat()
 	if err != nil {
+		observability.RecordError(span, err)
 		return nil, "", fmt.Errorf("stat object %s: %w", key, err)
 	}
 	data, err := io.ReadAll(obj)
 	if err != nil {
+		observability.RecordError(span, err)
 		return nil, "", fmt.Errorf("read object %s: %w", key, err)
 	}
+	span.SetAttributes(attribute.Int("s3.size", len(data)))
 	return data, info.ContentType, nil
 }
 
 func (s *S3) Delete(ctx context.Context, keys []string) error {
+	ctx, span := observability.Start(ctx, "s3.delete",
+		attribute.String("s3.bucket", s.bucket),
+		attribute.Int("s3.keys", len(keys)),
+	)
+	defer span.End()
 	for _, key := range keys {
 		key = strings.TrimSpace(key)
 		if key == "" {
@@ -89,6 +112,7 @@ func (s *S3) Delete(ctx context.Context, keys []string) error {
 		}
 		err := s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
 		if err != nil {
+			observability.RecordError(span, err)
 			return fmt.Errorf("remove object %s: %w", key, err)
 		}
 	}

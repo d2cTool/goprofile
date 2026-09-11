@@ -16,6 +16,11 @@ spec:
         - name: worker
           image: gophprofile:latest
           command: ["./worker"]
+          ports:
+            - containerPort: 9090
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: gophprofile-worker
           envFrom:
             - configMapRef:
                 name: gophprofile

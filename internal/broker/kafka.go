@@ -9,8 +9,11 @@ import (
 
 	"github.com/segmentio/kafka-go"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/d2cTool/goprofile/internal/config"
 	"github.com/d2cTool/goprofile/internal/domain"
+	"github.com/d2cTool/goprofile/internal/observability"
 )
 
 type Producer struct {
@@ -68,21 +71,34 @@ func (p *Producer) PublishDelete(ctx context.Context, event domain.AvatarDeleteE
 }
 
 func writeJSON(ctx context.Context, w *kafka.Writer, key, eventID string, payload any) error {
+	ctx, span := observability.Start(ctx, "kafka.publish",
+		attribute.String("messaging.system", "kafka"),
+		attribute.String("messaging.destination", w.Topic),
+		attribute.String("messaging.operation", "publish"),
+		attribute.String("messaging.message_id", eventID),
+	)
+	defer span.End()
+
 	body, err := json.Marshal(payload)
 	if err != nil {
+		observability.RecordError(span, err)
 		return fmt.Errorf("marshal event: %w", err)
 	}
+	headers := observability.InjectKafka(ctx, []kafka.Header{
+		{Key: "event_id", Value: []byte(eventID)},
+	})
 	msg := kafka.Message{
-		Key:   []byte(key),
-		Value: body,
-		Time:  time.Now().UTC(),
-		Headers: []kafka.Header{
-			{Key: "event_id", Value: []byte(eventID)},
-		},
+		Key:     []byte(key),
+		Value:   body,
+		Time:    time.Now().UTC(),
+		Headers: headers,
 	}
 	if err := w.WriteMessages(ctx, msg); err != nil {
+		observability.RecordError(span, err)
+		observability.KafkaMessages.WithLabelValues("publish", w.Topic, "error").Inc()
 		return fmt.Errorf("publish %s: %w", w.Topic, err)
 	}
+	observability.KafkaMessages.WithLabelValues("publish", w.Topic, "ok").Inc()
 	return nil
 }
 
