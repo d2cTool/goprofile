@@ -1,13 +1,15 @@
 package observability
 
 import (
+	"errors"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func RegisterPoolCollector(pool *pgxpool.Pool) {
+func RegisterPoolCollector(pool *pgxpool.Pool) error {
 	if pool == nil {
-		return
+		return nil
 	}
 	collectors := []prometheus.Collector{
 		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
@@ -25,9 +27,11 @@ func RegisterPoolCollector(pool *pgxpool.Pool) {
 	}
 	for _, c := range collectors {
 		if err := prometheus.Register(c); err != nil {
-			if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
-				panic(err)
+			var alreadyRegistered prometheus.AlreadyRegisteredError
+			if !errors.As(err, &alreadyRegistered) {
+				return err
 			}
 		}
 	}
+	return nil
 }

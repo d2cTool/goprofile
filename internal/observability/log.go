@@ -54,6 +54,15 @@ func (h *traceHandler) WithGroup(name string) slog.Handler {
 	return &traceHandler{Handler: h.Handler.WithGroup(name)}
 }
 
+type loggerCtxKey struct{}
+
+func ContextWithLogger(ctx context.Context, log *slog.Logger) context.Context {
+	return context.WithValue(ctx, loggerCtxKey{}, log)
+}
+
 func Logger(ctx context.Context) *slog.Logger {
+	if log, ok := ctx.Value(loggerCtxKey{}).(*slog.Logger); ok && log != nil {
+		return log
+	}
 	return slog.Default()
 }

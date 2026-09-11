@@ -38,10 +38,10 @@ var (
 		Help: "Worker processing results",
 	}, []string{"kind", "status"})
 
-	StorageUsage = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	StorageUsage = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "avatars_storage_bytes",
 		Help: "Total storage used by avatars",
-	}, []string{"user_id"})
+	})
 
 	OutboxUnpublished = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "avatars_outbox_unpublished",

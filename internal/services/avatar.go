@@ -54,10 +54,9 @@ func (s *AvatarService) Upload(ctx context.Context, userID, fileName string, dat
 	observability.UploadDuration.WithLabelValues(status).Observe(time.Since(start).Seconds())
 	if err != nil {
 		observability.RecordError(span, err)
-		observability.Logger(ctx).WarnContext(ctx, "avatar upload failed", "user_id", userID, "err", err)
 		return nil, err
 	}
-	observability.StorageUsage.WithLabelValues(userID).Add(float64(avatar.SizeBytes))
+	observability.StorageUsage.Add(float64(avatar.SizeBytes))
 	span.SetAttributes(
 		attribute.String("avatar_id", avatar.ID.String()),
 		attribute.String("mime_type", avatar.MimeType),
@@ -156,7 +155,6 @@ func (s *AvatarService) Delete(ctx context.Context, id uuid.UUID, userID string)
 	observability.DeletesTotal.WithLabelValues(observability.StatusOK(err)).Inc()
 	if err != nil {
 		observability.RecordError(span, err)
-		observability.Logger(ctx).WarnContext(ctx, "avatar delete failed", "avatar_id", id.String(), "user_id", userID, "err", err)
 		return err
 	}
 	observability.Logger(ctx).InfoContext(ctx, "avatar deleted", "avatar_id", id.String(), "user_id", userID)
@@ -181,7 +179,7 @@ func (s *AvatarService) delete(ctx context.Context, id uuid.UUID, userID string)
 	if _, _, err := s.repo.SoftDeleteOwnedWithOutbox(ctx, id, userID, ev); err != nil {
 		return err
 	}
-	observability.StorageUsage.WithLabelValues(userID).Sub(float64(existing.SizeBytes))
+	observability.StorageUsage.Sub(float64(existing.SizeBytes))
 	return nil
 }
 
@@ -376,7 +374,6 @@ func (s *AvatarService) ProcessUpload(ctx context.Context, event domain.AvatarUp
 	observability.ProcessedTotal.WithLabelValues("upload", observability.StatusOK(err)).Inc()
 	if err != nil {
 		observability.RecordError(span, err)
-		observability.Logger(ctx).WarnContext(ctx, "process upload failed", "avatar_id", event.AvatarID, "err", err)
 		return err
 	}
 	observability.Logger(ctx).InfoContext(ctx, "process upload done", "avatar_id", event.AvatarID)
@@ -458,7 +455,6 @@ func (s *AvatarService) ProcessDelete(ctx context.Context, event domain.AvatarDe
 	observability.ProcessedTotal.WithLabelValues("delete", observability.StatusOK(err)).Inc()
 	if err != nil {
 		observability.RecordError(span, err)
-		observability.Logger(ctx).WarnContext(ctx, "process delete failed", "avatar_id", event.AvatarID, "err", err)
 		return err
 	}
 	return nil

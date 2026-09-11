@@ -37,6 +37,10 @@ func HTTP(next http.Handler) http.Handler {
 		)
 		defer span.End()
 
+		if reqID := chimw.GetReqID(ctx); reqID != "" {
+			ctx = ContextWithLogger(ctx, Logger(ctx).With("request_id", reqID))
+		}
+
 		ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 		start := time.Now()
 		req := r.WithContext(ctx)

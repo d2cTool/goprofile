@@ -36,7 +36,10 @@ func New(ctx context.Context, cfg config.Config, log *slog.Logger) (*Deps, error
 	if err != nil {
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
-	observability.RegisterPoolCollector(pool)
+	if err := observability.RegisterPoolCollector(pool); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("register pool collector: %w", err)
+	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("postgres ping: %w", err)
