@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -97,5 +98,14 @@ func TestRouterHealthAndUploadPage(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/web/static/app.css", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("static %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics %d", rec.Code)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("http_requests_total")) {
+		t.Fatal("expected http_requests_total")
 	}
 }

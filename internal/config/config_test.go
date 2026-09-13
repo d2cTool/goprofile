@@ -8,6 +8,10 @@ func TestLoad(t *testing.T) {
 	t.Setenv("S3_USE_SSL", "true")
 	t.Setenv("RATE_LIMIT_RPS", "7")
 	t.Setenv("MAX_UPLOAD_BYTES", "2048")
+	t.Setenv("OTEL_SERVICE_NAME", "gophprofile-test")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4318")
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("METRICS_ADDR", ":9191")
 
 	cfg, err := Load()
 	if err != nil {
@@ -15,6 +19,9 @@ func TestLoad(t *testing.T) {
 	}
 	if !cfg.S3UseSSL || cfg.RateLimitRPS != 7 || len(cfg.KafkaBrokers) != 2 || cfg.MaxUploadBytes != 2048 {
 		t.Fatalf("%+v", cfg)
+	}
+	if cfg.ServiceName != "gophprofile-test" || cfg.OTLPEndpoint != "http://otel-collector:4318" || cfg.LogLevel != "debug" || cfg.MetricsAddr != ":9191" {
+		t.Fatalf("otel %+v", cfg)
 	}
 }
 

@@ -9,3 +9,6 @@ data:
   S3_USE_SSL: "false"
   KAFKA_BROKERS: kafka:9092
   KAFKA_GROUP: gophprofile-worker
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  LOG_LEVEL: info
+  METRICS_ADDR: ":9090"

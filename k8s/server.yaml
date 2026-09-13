@@ -18,6 +18,9 @@ spec:
           command: ["./server"]
           ports:
             - containerPort: 8080
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: gophprofile-server
           envFrom:
             - configMapRef:
                 name: gophprofile

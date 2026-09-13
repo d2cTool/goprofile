@@ -37,6 +37,11 @@ type Config struct {
 	TopicUpload  string
 	TopicDelete  string
 	TopicProcess string
+
+	ServiceName  string
+	OTLPEndpoint string
+	LogLevel     string
+	MetricsAddr  string
 }
 
 func Load() (Config, error) {
@@ -58,6 +63,10 @@ func Load() (Config, error) {
 		TopicUpload:    env("KAFKA_TOPIC_UPLOAD", "avatar.uploaded"),
 		TopicDelete:    env("KAFKA_TOPIC_DELETE", "avatar.deleted"),
 		TopicProcess:   env("KAFKA_TOPIC_PROCESS", "avatar.process"),
+		ServiceName:    env("OTEL_SERVICE_NAME", "gophprofile"),
+		OTLPEndpoint:   env("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		LogLevel:       env("LOG_LEVEL", "info"),
+		MetricsAddr:    env("METRICS_ADDR", ":9090"),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
