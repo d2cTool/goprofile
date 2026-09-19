@@ -1,0 +1,38 @@
+GophProfile has been deployed as "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+1. Application
+{{- if .Values.server.ingress.enabled }}
+   Add an entry to your resolver (or /etc/hosts if testing locally) and browse:
+     http://{{ .Values.server.ingress.host }}{{ .Values.server.ingress.path }}
+{{- else }}
+   Port-forward the server to reach it locally:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gophprofile.componentName" (dict "context" . "component" "server") }} 8080:{{ .Values.server.service.port }}
+     open http://localhost:8080/web/upload
+{{- end }}
+
+2. Rollout status
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "gophprofile.componentName" (dict "context" . "component" "server") }}
+   kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "gophprofile.componentName" (dict "context" . "component" "worker") }}
+
+3. Health / metrics
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gophprofile.componentName" (dict "context" . "component" "server") }} 8080:{{ .Values.server.service.port }}
+   curl http://localhost:8080/health
+   curl http://localhost:8080/metrics
+
+{{- if .Values.kubePrometheusStack.enabled }}
+4. Observability (kube-prometheus-stack)
+   Grafana:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gophprofile.fullname" . }}-grafana 3000:80
+     admin / {{ if .Values.kubePrometheusStack.grafana.adminPassword }}<value you set>{{ else }}<run: kubectl -n {{ .Release.Namespace }} get secret {{ include "gophprofile.fullname" . }}-grafana -o jsonpath='{.data.admin-password}' | base64 -d>{{ end }}
+     Dashboards: folder "GophProfile" -> "GophProfile overview" / "Node Exporter"
+   Prometheus:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Values.kubePrometheusStack.fullnameOverride }}-prometheus 9090:9090
+   Alertmanager:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Values.kubePrometheusStack.fullnameOverride }}-alertmanager 9093:9093
+{{- end }}
+{{- if .Values.jaeger.enabled }}
+   Jaeger UI:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "gophprofile.componentName" (dict "context" . "component" "jaeger") }} 16686:16686
+{{- end }}
+
+See helm/gophprofile/README.md and docs/ for architecture, API and monitoring documentation.

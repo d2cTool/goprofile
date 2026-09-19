@@ -63,6 +63,16 @@ make run-worker
 - `avatar.process` — операции ресайза
 - `avatar.deleted` — асинхронное удаление объектов из S3
 
+## Kubernetes / Helm
+
+Продакшн-деплой в Kubernetes (Deployment, HPA, PodDisruptionBudget, Ingress,
+NetworkPolicy, ServiceMonitor/PrometheusRule, Secrets) — см.
+[`helm/gophprofile`](helm/gophprofile/README.md). Чарт разворачивает то же,
+что и `docker-compose.yml`: сервис, воркер, PostgreSQL, MinIO, Kafka,
+OTel Collector, Loki, Jaeger и наблюдаемость через kube-prometheus-stack
+(Prometheus/Alertmanager/Grafana). Каталог `k8s/` содержит более ранние
+черновые манифесты и не поддерживается отдельно от чарта.
+
 ## Тесты и линт
 
 ```bash

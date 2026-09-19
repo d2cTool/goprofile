@@ -1,0 +1,16 @@
+{{- $component := "worker" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "context" . "component" $component) }}
+  labels:
+    {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: {{ .Values.worker.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" $component) | nindent 4 }}

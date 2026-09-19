@@ -1,0 +1,14 @@
+{{- $component := "server" }}
+{{- if .Values.server.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "context" . "component" $component) }}
+  labels:
+    {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.server.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" $component) | nindent 6 }}
+{{- end }}

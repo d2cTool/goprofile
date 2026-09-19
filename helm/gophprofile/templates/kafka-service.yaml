@@ -1,0 +1,20 @@
+{{- $component := "kafka" }}
+{{- if .Values.kafka.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "context" . "component" $component) }}
+  labels:
+    {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+spec:
+  clusterIP: None
+  ports:
+    - name: internal
+      port: 9092
+      targetPort: internal
+    - name: controller
+      port: 9093
+      targetPort: controller
+  selector:
+    {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" $component) | nindent 4 }}
+{{- end }}

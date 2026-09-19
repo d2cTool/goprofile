@@ -1,0 +1,34 @@
+apiVersion: v2
+name: gophprofile
+description: >
+  GophProfile avatar service - Helm chart converted from docker/docker-compose.yml.
+  Deploys the server/worker Go application plus PostgreSQL, MinIO, Kafka,
+  OpenTelemetry Collector, Loki and Jaeger, and wires them into the
+  kube-prometheus-stack (Prometheus, Alertmanager, Grafana, node-exporter)
+  for cluster-native monitoring.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/d2cTool/goprofile
+keywords:
+  - avatar
+  - go
+  - kafka
+  - postgresql
+  - minio
+maintainers:
+  - name: GophProfile
+sources:
+  - https://github.com/d2cTool/goprofile
+dependencies:
+  # Provides the Prometheus Operator CRDs (ServiceMonitor/PrometheusRule),
+  # Prometheus, Alertmanager, Grafana and node-exporter. Postgres/MinIO/Kafka
+  # are instead templated directly in this chart (see README) to track the
+  # exact images/config used by docker-compose.yml, because the public
+  # Bitnami chart repository used previously for those no longer serves
+  # versioned releases.
+  - name: kube-prometheus-stack
+    version: "91.4.1"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    alias: kubePrometheusStack
+    condition: kubePrometheusStack.enabled

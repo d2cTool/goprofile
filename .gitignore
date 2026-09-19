@@ -38,6 +38,9 @@ go.work.sum
 Thumbs.db
 .DS_Store
 
+# Helm dependency artifacts (fetched via `helm dependency update`)
+helm/**/charts/*.tgz
+
 # Editor/IDE
 # .idea/
 # .vscode/

@@ -1,0 +1,43 @@
+{{- $component := "kafka-init" }}
+{{- if .Values.kafka.enabled }}
+{{- $bootstrap := include "gophprofile.kafkaBootstrap" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "context" . "component" $component) }}
+  labels:
+    {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: kafka-topics
+          image: {{ .Values.kafka.image | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              for topic in {{ .Values.config.kafkaTopicUpload }} {{ .Values.config.kafkaTopicDelete }} {{ .Values.config.kafkaTopicProcess }}; do
+                until /opt/kafka/bin/kafka-topics.sh --bootstrap-server {{ $bootstrap }} --create --if-not-exists --topic "$topic" --partitions 3 --replication-factor 1; do
+                  echo "waiting for kafka..."; sleep 3
+                done
+              done
+{{- end }}

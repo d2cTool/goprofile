@@ -1,0 +1,29 @@
+{{- $component := "minio" }}
+{{- if and .Values.minio.enabled .Values.minio.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "context" . "component" $component) }}
+  labels:
+    {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" $component) | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" "server") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" "worker") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" "minio-init") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 9000
+{{- end }}

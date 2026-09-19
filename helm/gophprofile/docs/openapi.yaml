@@ -1,0 +1,272 @@
+openapi: 3.0.3
+info:
+  title: GophProfile Avatar Service API
+  description: >
+    Upload, store, resize and serve user avatar images. Originals and
+    thumbnails (100x100 / 300x300) are stored in S3-compatible storage
+    (MinIO); resizing happens asynchronously via a Kafka-driven worker.
+  version: "1.0.0"
+  contact:
+    name: GophProfile
+servers:
+  - url: http://gophprofile.local
+    description: In-cluster Ingress host (see helm/gophprofile/values.yaml server.ingress.host)
+  - url: http://localhost:8080
+    description: Local / docker-compose
+
+tags:
+  - name: avatars
+  - name: operations
+
+paths:
+  /api/v1/avatars:
+    post:
+      tags: [avatars]
+      summary: Upload a new avatar
+      description: >
+        Stores the original image in S3 and publishes an `avatar.uploaded`
+        Kafka event; the worker asynchronously generates 100x100/300x300
+        thumbnails. The response's `status` is `processing` until thumbnails
+        finish (poll `GET /api/v1/avatars/{avatar_id}/metadata`).
+      security:
+        - userIdHeader: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: JPEG/PNG/WebP, validated by magic bytes, up to 10 MiB (MAX_UPLOAD_BYTES) and 20 MP.
+      responses:
+        "201":
+          description: Upload accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadResponse"
+        "400":
+          description: Missing/invalid file, or invalid file format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: File too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded (10 uploads/min per user or IP)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/avatars/{avatar_id}:
+    get:
+      tags: [avatars]
+      summary: Fetch an avatar image
+      parameters:
+        - $ref: "#/components/parameters/AvatarId"
+        - $ref: "#/components/parameters/Size"
+        - $ref: "#/components/parameters/Format"
+        - name: If-None-Match
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Image bytes
+          headers:
+            ETag: { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "304":
+          description: Not modified (ETag matched If-None-Match)
+        "400":
+          description: Invalid size/format parameter
+        "404":
+          description: Avatar not found
+    delete:
+      tags: [avatars]
+      summary: Delete an avatar
+      description: Soft-deletes the record and publishes an `avatar.deleted` event for async S3 cleanup.
+      security:
+        - userIdHeader: []
+      parameters:
+        - $ref: "#/components/parameters/AvatarId"
+      responses:
+        "204": { description: Deleted }
+        "403": { description: Not the owner }
+        "404": { description: Avatar not found }
+
+  /api/v1/avatars/{avatar_id}/metadata:
+    get:
+      tags: [avatars]
+      summary: Get avatar metadata
+      parameters:
+        - $ref: "#/components/parameters/AvatarId"
+      responses:
+        "200":
+          description: Metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvatarMetadata"
+        "404": { description: Avatar not found }
+
+  /api/v1/users/{user_id}/avatar:
+    get:
+      tags: [avatars]
+      summary: Fetch a user's current avatar image
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/Size"
+        - $ref: "#/components/parameters/Format"
+      responses:
+        "200":
+          description: Image bytes
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+        "404": { description: No avatar for this user }
+    delete:
+      tags: [avatars]
+      summary: Delete a user's current avatar
+      security:
+        - userIdHeader: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "204": { description: Deleted }
+        "403": { description: X-User-ID does not match user_id }
+        "404": { description: No avatar for this user }
+
+  /api/v1/users/{user_id}/avatars:
+    get:
+      tags: [avatars]
+      summary: List a user's avatars
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: List of avatar metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AvatarMetadata"
+
+  /health:
+    get:
+      tags: [operations]
+      summary: Liveness/readiness health check
+      description: Pings PostgreSQL, S3 (MinIO) and Kafka with a 3s timeout.
+      responses:
+        "200":
+          description: All dependencies healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: One or more dependencies unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /metrics:
+    get:
+      tags: [operations]
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus text exposition format
+          content:
+            text/plain: { schema: { type: string } }
+
+components:
+  securitySchemes:
+    userIdHeader:
+      type: apiKey
+      in: header
+      name: X-User-ID
+      description: Caller-supplied user identifier; not authentication, just ownership scoping.
+
+  parameters:
+    AvatarId:
+      name: avatar_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema: { type: string }
+    Size:
+      name: size
+      in: query
+      schema: { type: string, enum: [original, "100x100", "300x300"], default: original }
+    Format:
+      name: format
+      in: query
+      schema: { type: string, enum: [jpeg, png, webp] }
+
+  schemas:
+    UploadResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string }
+        url: { type: string, format: uri }
+        status: { type: string, enum: [processing, completed, failed] }
+        created_at: { type: string, format: date-time }
+
+    AvatarMetadata:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string }
+        file_name: { type: string }
+        mime_type: { type: string }
+        size: { type: integer, format: int64 }
+        dimensions:
+          type: object
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+        thumbnails:
+          type: array
+          items:
+            type: object
+            properties:
+              size: { type: string, enum: ["100x100", "300x300"] }
+              url: { type: string, format: uri }
+        status: { type: string, enum: [pending, processing, completed, failed] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    HealthResponse:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, fail] }
+        components:
+          type: object
+          additionalProperties: { type: string, enum: [ok, fail] }
+
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+        details: { type: string }

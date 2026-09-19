@@ -1,0 +1,16 @@
+{{- $component := "server" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "context" . "component" $component) }}
+  labels:
+    {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+spec:
+  type: {{ .Values.server.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.server.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" $component) | nindent 4 }}
