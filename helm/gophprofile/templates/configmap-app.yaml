@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gophprofile.fullname" . }}-app
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+data:
+  HTTP_ADDR: {{ printf ":%d" (int .Values.server.containerPort) | quote }}
+  PUBLIC_BASE_URL: {{ .Values.config.publicBaseUrl | quote }}
+  S3_ENDPOINT: {{ default (printf "%s:9000" (include "gophprofile.minioHost" .)) .Values.config.s3Endpoint | quote }}
+  S3_BUCKET: {{ .Values.config.s3Bucket | quote }}
+  S3_USE_SSL: {{ .Values.config.s3UseSSL | quote }}
+  S3_REGION: {{ .Values.config.s3Region | quote }}
+  KAFKA_BROKERS: {{ default (include "gophprofile.kafkaBootstrap" .) .Values.config.kafkaBrokers | quote }}
+  KAFKA_GROUP: {{ .Values.config.kafkaGroup | quote }}
+  KAFKA_TOPIC_UPLOAD: {{ .Values.config.kafkaTopicUpload | quote }}
+  KAFKA_TOPIC_DELETE: {{ .Values.config.kafkaTopicDelete | quote }}
+  KAFKA_TOPIC_PROCESS: {{ .Values.config.kafkaTopicProcess | quote }}
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  RATE_LIMIT_RPS: {{ .Values.config.rateLimitRps | quote }}
+  MAX_UPLOAD_BYTES: {{ .Values.config.maxUploadBytes | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ include "gophprofile.otelEndpoint" . | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  METRICS_ADDR: {{ printf ":%d" (int .Values.worker.metricsPort) | quote }}

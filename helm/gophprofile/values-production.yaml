@@ -1,0 +1,38 @@
+# Example production overlay. Copy and adjust before using -
+# hostnames, image registry and the existingSecret below are placeholders.
+#
+#   helm upgrade --install gophprofile . -f values-production.yaml -n gophprofile
+
+image:
+  repository: registry.example.com/gophprofile
+  tag: "v1.2.3"
+
+server:
+  ingress:
+    host: avatars.example.com
+    tls:
+      - secretName: gophprofile-tls
+        hosts:
+          - avatars.example.com
+
+config:
+  publicBaseUrl: "https://avatars.example.com"
+  s3Endpoint: "s3.example.com:443"
+  kafkaBrokers: "kafka-managed.example.com:9092"
+
+# Manage DB/S3 credentials with your own tooling (Vault, External Secrets,
+# sealed-secrets, ...) instead of letting the chart generate them, and point
+# it at that Secret. It must contain the same keys as templates/secret-app.yaml:
+# POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, DATABASE_URL, S3_ACCESS_KEY, S3_SECRET_KEY.
+secrets:
+  existingSecret: gophprofile-app-secrets
+
+# Prefer managed services in production instead of the in-chart single-replica
+# StatefulSets/Deployments; update `config.*` (S3 endpoint/bucket, Kafka
+# brokers) to match, and put the managed Postgres DSN in your existingSecret.
+postgresql:
+  enabled: false
+minio:
+  enabled: false
+kafka:
+  enabled: false

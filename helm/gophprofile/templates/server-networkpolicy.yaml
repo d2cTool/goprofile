@@ -1,0 +1,63 @@
+{{- $component := "server" }}
+{{- if .Values.server.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "context" . "component" $component) }}
+  labels:
+    {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" $component) | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- toYaml .Values.server.networkPolicy.ingressFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.server.containerPort }}
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Postgres
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" "postgresql") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    # MinIO
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" "minio") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 9000
+    # Kafka
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" "kafka") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 9092
+    # OTel Collector
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "gophprofile.componentSelectorLabels" (dict "context" . "component" "otel-collector") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 4318
+{{- end }}

@@ -1,0 +1,357 @@
+# Default values for the gophprofile chart.
+# See README.md for a guided walkthrough and docs/ for API/architecture docs.
+
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+image:
+  # Built from docker/Dockerfile: `docker build -f docker/Dockerfile -t gophprofile:latest ..`
+  repository: gophprofile
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod-level security context shared by server and worker. Matches the
+# non-root `app` user (uid/gid 10001) created in docker/Dockerfile.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level security context shared by server and worker.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Non-secret application configuration, rendered into a ConfigMap and
+# consumed via envFrom by both the server and the worker. Mirrors
+# k8s/configmap.yaml / .env.example.
+config:
+  publicBaseUrl: "http://gophprofile.local"
+  # Leave empty to use the in-chart MinIO/Kafka Service DNS names; set these
+  # when postgresql/minio/kafka.enabled is false to point at managed services.
+  s3Endpoint: ""
+  kafkaBrokers: ""
+  s3Bucket: "avatars"
+  s3UseSSL: "false"
+  s3Region: "us-east-1"
+  kafkaGroup: "gophprofile-worker"
+  kafkaTopicUpload: "avatar.uploaded"
+  kafkaTopicDelete: "avatar.deleted"
+  kafkaTopicProcess: "avatar.process"
+  corsOrigins: "*"
+  rateLimitRps: "20"
+  maxUploadBytes: "10485760"
+  logLevel: "info"
+
+# Secret values. Leave the password fields empty to have the chart generate
+# random passwords on install (persisted across upgrades). Set
+# existingSecret to point at a Secret you manage out-of-band (e.g. via
+# External Secrets / Vault) instead - when set, the chart's own Secret
+# templates are skipped and none of the other `secrets.*` fields are used.
+secrets:
+  existingSecret: ""
+  postgresUser: "gophprofile"
+  postgresPassword: ""
+  postgresDb: "gophprofile"
+  s3AccessKey: "minioadmin"
+  s3SecretKey: ""
+
+server:
+  replicaCount: 2
+  containerPort: 8080
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # SIGTERM -> srv.Shutdown(ctx) drains in-flight requests; preStop gives the
+  # Service/Endpoints controller time to remove the pod from load-balancing
+  # before the process receives SIGTERM, avoiding dropped in-flight requests.
+  terminationGracePeriodSeconds: 30
+  lifecycle:
+    preStop:
+      exec:
+        command: ["/bin/sh", "-c", "sleep 5"]
+
+  probes:
+    liveness:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readiness:
+      httpGet:
+        path: /health
+        port: http
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    startup:
+      httpGet:
+        path: /health
+        port: http
+      failureThreshold: 30
+      periodSeconds: 2
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    # Scale down slowly, scale up fast - avoids flapping under bursty upload traffic.
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Pods
+            value: 1
+            periodSeconds: 120
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "12m"
+    host: gophprofile.local
+    path: /
+    pathType: Prefix
+    tls: []
+    # tls:
+    #   - secretName: gophprofile-tls
+    #     hosts:
+    #       - gophprofile.local
+
+  networkPolicy:
+    enabled: true
+    # Peers allowed to reach the server on containerPort. Defaults to the
+    # ingress-nginx namespace (label set automatically by Kubernetes on every
+    # namespace) plus the in-namespace Prometheus pod from kube-prometheus-stack.
+    ingressFrom:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: prometheus
+
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    path: /metrics
+
+worker:
+  replicaCount: 2
+  metricsPort: 9090
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+
+  terminationGracePeriodSeconds: 30
+
+  probes:
+    liveness:
+      tcpSocket:
+        port: metrics
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 3
+      failureThreshold: 3
+    readiness:
+      tcpSocket:
+        port: metrics
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: 80
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+  networkPolicy:
+    enabled: true
+
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    path: /metrics
+
+# ---------------------------------------------------------------------------
+# Stateful/backing services. Each is a plain Deployment/StatefulSet templated
+# by this chart using the same images docker-compose.yml uses, sized for a
+# single non-HA replica by default (dev/staging). For production, point
+# these at managed services instead and set `enabled: false`.
+# ---------------------------------------------------------------------------
+
+postgresql:
+  enabled: true
+  image: "postgres:16-alpine"
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  networkPolicy:
+    enabled: true
+
+minio:
+  enabled: true
+  image: "minio/minio:latest"
+  mcImage: "minio/mc:latest"
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  networkPolicy:
+    enabled: true
+
+kafka:
+  enabled: true
+  image: "apache/kafka:4.1.0"
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits: { cpu: 1, memory: 1536Mi }
+  networkPolicy:
+    enabled: true
+
+otelCollector:
+  enabled: true
+  image: "otel/opentelemetry-collector:0.160.0"
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+loki:
+  enabled: true
+  image: "grafana/loki:3.7.7"
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+jaeger:
+  enabled: true
+  image: "jaegertracing/all-in-one:1.76.0"
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+# ---------------------------------------------------------------------------
+# Monitoring stack (dependency). Set to false if your cluster already has
+# the Prometheus Operator / Grafana installed - the app's ServiceMonitor,
+# PrometheusRule and Grafana dashboard ConfigMaps are still created by this
+# chart via the `monitoring.*` keys below and will be picked up by any
+# operator-managed Prometheus/Grafana in the cluster.
+# ---------------------------------------------------------------------------
+
+kubePrometheusStack:
+  enabled: true
+  fullnameOverride: "gophprofile-kps"
+
+  grafana:
+    enabled: true
+    adminUser: admin
+    adminPassword: "" # generated by the grafana subchart if left empty (stored in the <release>-grafana Secret, reused across upgrades)
+    defaultDashboardsEnabled: true
+    sidecar:
+      dashboards:
+        enabled: true
+        label: grafana_dashboard
+        labelValue: "1"
+      datasources:
+        enabled: true
+        label: grafana_datasource
+        labelValue: "1"
+
+  alertmanager:
+    enabled: true
+    config:
+      route:
+        receiver: default
+        group_by: ["alertname", "severity"]
+        group_wait: 15s
+        group_interval: 1m
+        repeat_interval: 4h
+      receivers:
+        - name: default
+
+  prometheus:
+    enabled: true
+    prometheusSpec:
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      ruleSelectorNilUsesHelmValues: false
+      retention: 15d
+
+  nodeExporter:
+    enabled: true
+
+  kubeStateMetrics:
+    enabled: true
+
+# App-level monitoring wiring: alert rules and dashboards ported from
+# docker/alerts.yml and docker/grafana-dashboard*.json.
+monitoring:
+  prometheusRule:
+    enabled: true
+  grafanaDashboards:
+    enabled: true

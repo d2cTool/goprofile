@@ -1,0 +1,51 @@
+{{- $component := "otel-collector" }}
+{{- if .Values.otelCollector.enabled }}
+{{- $fullname := include "gophprofile.fullname" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gophprofile.componentName" (dict "context" . "component" $component) }}
+  labels:
+    {{- include "gophprofile.componentLabels" (dict "context" . "component" $component) | nindent 4 }}
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 512
+
+    exporters:
+      otlp/jaeger:
+        endpoint: {{ $fullname }}-jaeger:4317
+        tls:
+          insecure: true
+      otlphttp/loki:
+        endpoint: http://{{ $fullname }}-loki:3100/otlp
+        compression: gzip
+        tls:
+          insecure: true
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlp/jaeger]
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [otlphttp/loki]
+{{- end }}

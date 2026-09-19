@@ -1,0 +1,49 @@
+{{- if and .Values.kubePrometheusStack.enabled .Values.kubePrometheusStack.grafana.sidecar.datasources.enabled }}
+{{- $fullname := include "gophprofile.fullname" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-grafana-datasources
+  labels:
+    {{- include "gophprofile.labels" . | nindent 4 }}
+    {{ .Values.kubePrometheusStack.grafana.sidecar.datasources.label }}: {{ .Values.kubePrometheusStack.grafana.sidecar.datasources.labelValue | quote }}
+data:
+  gophprofile-datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      {{- if .Values.loki.enabled }}
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://{{ $fullname }}-loki:3100
+        editable: false
+        jsonData:
+          derivedFields:
+            - datasourceUid: jaeger
+              matcherRegex: '"trace_id":"([a-f0-9]+)"'
+              name: TraceID
+              url: "$${__value.raw}"
+            - datasourceUid: jaeger
+              matcherType: label
+              matcherRegex: trace_id
+              name: TraceID
+              url: "$${__value.raw}"
+      {{- end }}
+      {{- if .Values.jaeger.enabled }}
+      - name: Jaeger
+        type: jaeger
+        uid: jaeger
+        access: proxy
+        url: http://{{ $fullname }}-jaeger:16686
+        editable: false
+        {{- if .Values.loki.enabled }}
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki
+            filterByTraceID: false
+            customQuery: true
+            query: '{service_name=~"gophprofile-.*"} | trace_id=`$${__span.traceId}`'
+        {{- end }}
+      {{- end }}
+{{- end }}

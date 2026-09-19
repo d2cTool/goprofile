@@ -1,0 +1,128 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Request rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "expr": "sum(rate(http_requests_total[5m]))", "legendFormat": "all", "refId": "A" }]
+    },
+    {
+      "title": "Error rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "max": 1 }, "overrides": [] },
+      "targets": [{
+        "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 0.001)",
+        "legendFormat": "5xx",
+        "refId": "A"
+      }]
+    },
+    {
+      "title": "HTTP duration p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, path))",
+        "legendFormat": "{{path}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "title": "Uploads",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(avatars_uploads_total[5m])) by (status)", "legendFormat": "{{status}}", "refId": "A" }]
+    },
+    {
+      "title": "Upload duration p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum(rate(avatars_upload_duration_seconds_bucket[5m])) by (le, status))",
+        "legendFormat": "{{status}}",
+        "refId": "A"
+      }]
+    },
+    {
+      "title": "Storage bytes",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "decbytes" }, "overrides": [] },
+      "targets": [{ "expr": "sum(avatars_storage_bytes)", "legendFormat": "tracked", "refId": "A" }]
+    },
+    {
+      "title": "Outbox unpublished",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "avatars_outbox_unpublished", "legendFormat": "unpublished", "refId": "A" }]
+    },
+    {
+      "title": "DB pool",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "db_pool_acquired", "legendFormat": "acquired", "refId": "A" },
+        { "expr": "db_pool_idle", "legendFormat": "idle", "refId": "B" },
+        { "expr": "db_pool_max", "legendFormat": "max", "refId": "C" }
+      ]
+    },
+    {
+      "title": "Node CPU / memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(node_cpu_seconds_total{mode!=\"idle\"}[5m])", "legendFormat": "cpu {{cpu}}", "refId": "A" },
+        { "expr": "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes", "legendFormat": "mem available ratio", "refId": "B" }
+      ]
+    },
+    {
+      "title": "Worker processing",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(avatars_processed_total[5m])) by (kind, status)", "legendFormat": "{{kind}} {{status}}", "refId": "A" }]
+    },
+    {
+      "title": "Kafka messages",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum(rate(avatars_kafka_messages_total[5m])) by (op, topic, status)", "legendFormat": "{{op}} {{topic}} {{status}}", "refId": "A" }]
+    },
+    {
+      "title": "Application logs",
+      "type": "logs",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 32 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{ "expr": "{service_name=~\"gophprofile-.*\"}", "refId": "A" }]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["gophprofile", "red"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "GophProfile overview",
+  "uid": "gophprofile-overview",
+  "version": 1
+}
